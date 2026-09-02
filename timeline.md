@@ -10,12 +10,13 @@
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~22:05, end of Phase 1)
+# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~22:10, end of Phase 1)
 
 ## Where we are
 
-**Phase 0: done. Phase 1: done except the Anthropic smoke call (blocked on one value from
-Evan) and Vercel (Evan's to click).** Scaffold is installed, committed, building, and tested.
+**Phase 0: done. Phase 1: done except the Vercel deploy, which is Evan's to click.**
+Scaffold installed, committed, building, tested; Supabase and Anthropic both proven from the
+running app.
 
 Accounts and keys live *outside* the repo, so a fresh session cannot see them:
 
@@ -28,7 +29,7 @@ Accounts and keys live *outside* the repo, so a fresh session cannot see them:
 | `.env.example` committed | OK — 4 required key names + optional `ANTHROPIC_WORKSPACE_ID` |
 | Vitest wired to `npm test` | OK — 6 tests green in ~250ms (`tests/env.test.ts`) |
 | Supabase reachable from the app | OK — `/api/smoke` returns `reachable: true`, RLS returns no rows as expected |
-| **Anthropic smoke call proven** | **BLOCKED** — 400, see below |
+| **Anthropic smoke call proven** | OK — `/api/smoke?run=llm` returns `ok: true`, served by `claude-opus-5` |
 | Vercel environment variables added | TODO — Evan's to do |
 | First Vercel deploy green | TODO — Evan's to do |
 
@@ -45,35 +46,33 @@ passed locally and broken on Vercel. Fixed with `npm install`, then `npm install
 present in both the manifest and the lock — **check the lock, not just `package.json`: Vercel
 runs `npm ci`, which reads only the lock.**
 
-## The one blocker
+## The blocker that was — resolved
 
-`GET /api/smoke?run=llm` returns:
+The original `ANTHROPIC_API_KEY` was an **identity-linked key**, which rejects any request
+that does not name the workspace it acts in:
 
 ```
 400 invalid_request_error — "anthropic-workspace-id is required when authenticating
 with an identity-linked API key; send the id of the workspace this request acts in."
 ```
 
-The `ANTHROPIC_API_KEY` in `.env` is an **identity-linked key**, which must name the workspace
-each request acts in. The route already sends the header when `ANTHROPIC_WORKSPACE_ID` is set;
-it is simply unset. Two fixes, either is fine:
+Evan swapped in a **plain API key**, which needs no such header, and the smoke call went
+green. `/api/smoke?run=llm` returns `ok: true` served by `claude-opus-5`.
 
-- **Add `ANTHROPIC_WORKSPACE_ID`** to `.env` (and to Vercel) — Anthropic Console, Settings,
-  Workspaces; the id looks like `wrkspc_...`. Keeps the existing key.
-- **Or create a plain API key** in the Console and swap it in; plain keys need no header.
-
-Then re-run `curl "http://localhost:3000/api/smoke?run=llm"` and Phase 1 is closed.
+`src/app/api/smoke/route.ts` still sends `anthropic-workspace-id` when
+`ANTHROPIC_WORKSPACE_ID` is set, and omits it when unset — so the code works with either kind
+of key. `.env.example` documents the variable as optional. Nothing to undo.
 
 ## Immediate next steps, in order
 
-1. Unblock the Anthropic call (above), re-run the smoke route, confirm `ok: true`.
-2. Push, then add the env vars in Vercel, Settings, Environment Variables, ticked for
+1. Push, then add the env vars in Vercel, Settings, Environment Variables, ticked for
    Production + Preview + Development: `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `ANTHROPIC_API_KEY`, and
-   `ANTHROPIC_WORKSPACE_ID` if that was the chosen fix. Local `.env` is gitignored and **never
-   reaches Vercel** — by design. Env vars are read at *build* time, so **redeploy after adding**.
-3. Confirm the deploy is green, then start Phase 2.
-4. **Before submission: delete or auth-gate `/api/smoke`.** It is public and, with `?run=llm`,
+   only those four (the plain key needs no `ANTHROPIC_WORKSPACE_ID`). Local `.env` is
+   gitignored and **never reaches Vercel** — by design. Env vars are read at *build* time, so
+   **redeploy after adding them**.
+2. Confirm the deploy is green, then start Phase 2.
+3. **Before submission: delete or auth-gate `/api/smoke`.** It is public and, with `?run=llm`,
    billable. The config-only default response is harmless; the LLM path is not.
 
 ## What the scaffold actually is
@@ -107,9 +106,11 @@ App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0. Added since: Vitest
   invariants are not at risk. It re-adds itself if deleted; it is **committed** so the tree
   stays clean. Kill it with `agentRules: false` in `next.config.ts` if it ever becomes a
   problem. **Do check `git diff CLAUDE.md` after the first `next dev` of a session.**
-- **The Anthropic key is identity-linked** — every request needs the `anthropic-workspace-id`
-  header. `src/app/api/smoke/route.ts` sends it from `ANTHROPIC_WORKSPACE_ID` when set; any
-  *new* code path that constructs `new Anthropic()` must do the same, or it 400s.
+- **Anthropic keys come in two kinds.** An *identity-linked* key 400s unless every request
+  carries an `anthropic-workspace-id` header; a *plain* key does not. We are on a plain key.
+  If a key is ever swapped and calls start 400ing on "anthropic-workspace-id is required",
+  set `ANTHROPIC_WORKSPACE_ID` — `/api/smoke` already reads it, other call sites would need it
+  passed as `defaultHeaders` on `new Anthropic()`.
 - **Vitest does not read `tsconfig.json` path aliases.** The `@/*` alias is declared a second
   time in `vitest.config.mts`. Adding a new alias means editing both files.
 - **`vitest.config.mts`, not `.ts`** — as `.ts` it is loaded as CommonJS and Vite warns on
@@ -172,7 +173,7 @@ failure mode an apology in the brief cannot recover.
 - [x] Supabase project + the 7 tables — run and verified Sep 2: both VERDICT rows `✓ PASS`, 7 tables RLS-on, 13 policies, `audit_logs` has no content column
 - [x] `.env.example` committed; real `.env` never staged (`.env` confirmed gitignored + untracked)
 - [ ] Deploy to Vercel **immediately** — something must always be live *(Evan: env vars + redeploy)*
-- [~] Anthropic API key wired via `/api/smoke?run=llm` — **blocked on `ANTHROPIC_WORKSPACE_ID`**, see HANDOFF
+- [x] Anthropic API key wired, one smoke call proven — `/api/smoke?run=llm` green on `claude-opus-5`
 - [x] Vitest wired so `npm test` is green (Definition of Done gate #2) — 6 tests, ~250ms
 - [x] Supabase reachable from the app; RLS confirmed returning no rows to the anon key
 
