@@ -10,6 +10,66 @@
 
 ---
 
+# 📍 HANDOFF — read this first (updated Sep 2, 2026, mid-Phase-1)
+
+## Where we are
+
+**Phase 0 scaffold: done and committed.** Phase 1 is **in progress, not finished.**
+
+Accounts and keys are set up *outside* the repo, so a fresh session cannot see them:
+
+| Thing | State |
+|---|---|
+| Supabase project | ✅ Created ("enable RLS for all tables" ticked at creation) |
+| Supabase URL + publishable key + secret key | ✅ In local `.env` (gitignored — verified untracked) |
+| Anthropic API key | ✅ In local `.env` |
+| Vercel account + repo imported | ✅ Done via GitHub |
+| **`0001_init.sql` actually RUN in Supabase** | ❌ **NOT YET — this is where Evan stopped** |
+| **`verify_rls.sql` run** | ❌ Not started |
+| **Vercel environment variables added** | ❌ Not done — see below |
+| Next.js scaffold (`package.json` etc.) | ❌ Not started — repo is still docs + SQL only |
+
+## Immediate next steps, in order
+
+1. **Run [supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql)** — paste the whole file into the Supabase SQL Editor. It is **idempotent**: if it errors partway, fix the error and re-run the *entire file*. Do not hand-patch a half-built database.
+2. **Run [supabase/verify_rls.sql](supabase/verify_rls.sql)** — expect **7 rows, every `rls_enabled = true`, every `policies >= 1`**. This is the evidence for safety invariant #7.
+3. **Add the 4 env vars in Vercel** → Project → Settings → Environment Variables, ticked for Production + Preview + Development:
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `ANTHROPIC_API_KEY`.
+   The local `.env` is gitignored and **never reaches Vercel** — that is by design, not a bug. Env vars are read at *build* time, so redeploy after adding them.
+4. **Scaffold Next.js at the repo root** and get a hello-world live on Vercel.
+
+## Open decisions awaiting Evan
+
+- **Supabase GitHub integration** — recommended **disconnected**. It auto-runs migrations on every push to `main`, which will collide with the manual SQL-Editor path above ("table already exists") and turns a typo into a 3am CI debug. Unconfirmed whether Evan disconnected it.
+- **Two additive columns** were added beyond the locked CLAUDE.md schema, both to make RLS policies expressible: `escalations.patient_session_id` and `funnel_events.session_type`. Keep unless Evan objects.
+- **`messages.risk_provenance` is `jsonb`**, not the bare timestamp the brief names — it carries `{"source":"keyword"|"llm","matched":…,"at":…}` so the deciding layer is recorded. This is the evidence for safety invariant #2. Superset of the brief; revertible.
+
+## Known traps
+
+- **`create-next-app` may overwrite `.gitignore`.** Immediately after scaffolding, run `git check-ignore -v .env` and confirm it is still ignored. A leaked key cannot be un-leaked from git history.
+- **The first Vercel deploy will fail** — there is no `package.json` yet. Expected, not a bug. It goes green after the scaffold.
+- **Staff role lives in the JWT**, not a table (`is_staff()` reads `app_metadata.role`). After granting the role via SQL, the account **must sign out and back in** or `is_staff()` stays false.
+- **RLS failures are silent** — an empty array, no error. When a query returns nothing, "did I write a policy for that table?" is the first thing to check, not the tenth.
+
+## Prompt to start a fresh session
+
+```
+Read timeline.md, including the HANDOFF section, and continue Phase 1.
+
+Before you write anything, tell me your plan and confirm you've
+loaded CLAUDE.md by quoting safety invariant #2 back to me.
+
+Stack decisions already made, don't re-ask:
+Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`.
+Everything at the repo root — no subfolder.
+
+docs/BUILD_PLAN.md and the brief PDF in docs/ are background spec,
+but timeline.md owns the phase list and its ~11h budget supersedes
+BUILD_PLAN's ~24h one.
+```
+
+---
+
 ## Cut order (when time slips)
 
 Cut in this order, and record the cut here as a one-liner:
