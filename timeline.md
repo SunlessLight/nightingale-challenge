@@ -10,65 +10,71 @@
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~21:50, mid-Phase-1)
+# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~22:05, end of Phase 1)
 
 ## Where we are
 
-**Phase 0: done. Phase 1: database is DONE and verified. Scaffold is HALF-INSTALLED —
-read "The dirty state" below before running anything.**
+**Phase 0: done. Phase 1: done except the Anthropic smoke call (blocked on one value from
+Evan) and Vercel (Evan's to click).** Scaffold is installed, committed, building, and tested.
 
 Accounts and keys live *outside* the repo, so a fresh session cannot see them:
 
 | Thing | State |
 |---|---|
-| Supabase project + `.env` (URL, publishable key, secret key, Anthropic key) | ✅ `.env` present, gitignored, verified untracked |
-| **`0001_init.sql` run in Supabase** | ✅ **DONE** — succeeded after the ordering fix below |
-| **`verify_rls.sql` run** | ✅ **DONE** — both VERDICT rows `✓ PASS`; 7 tables RLS-on, 13 policies, `audit_logs` 6 columns, no content column |
-| Next.js scaffold files in repo | ⚠️ Copied in, **uncommitted**, install incomplete |
-| Vercel environment variables added | ❌ Not done |
-| First Vercel deploy green | ❌ Not done |
-| Anthropic smoke call proven | ❌ Not done |
-| Vitest wired to `npm test` | ❌ Not done |
+| Supabase project + `.env` (URL, publishable key, secret key, Anthropic key) | OK — `.env` present, gitignored, verified untracked |
+| `0001_init.sql` run in Supabase | OK — DONE |
+| `verify_rls.sql` run | OK — both VERDICT rows PASS; 7 tables RLS-on, 13 policies, `audit_logs` 6 columns, no content column |
+| Next.js scaffold installed + committed | OK — `37d2b32`, deps reconciled, `npm run build` green |
+| `.env.example` committed | OK — 4 required key names + optional `ANTHROPIC_WORKSPACE_ID` |
+| Vitest wired to `npm test` | OK — 6 tests green in ~250ms (`tests/env.test.ts`) |
+| Supabase reachable from the app | OK — `/api/smoke` returns `reachable: true`, RLS returns no rows as expected |
+| **Anthropic smoke call proven** | **BLOCKED** — 400, see below |
+| Vercel environment variables added | TODO — Evan's to do |
+| First Vercel deploy green | TODO — Evan's to do |
 
-## The dirty state — fix this first
+## The dirty state — RESOLVED, and the record was wrong
 
-An `npm install` was interrupted mid-flight. The result is **inconsistent, and it fails in a
-way that passes locally and breaks on Vercel**:
+The previous handoff described the wrong failure. What was actually true: **`node_modules/`
+did not exist at all**, and none of `@supabase/supabase-js`, `@anthropic-ai/sdk` or `vitest`
+appeared in `package.json` *or* `package-lock.json`. Nothing was half-installed on disk — the
+scaffold's manifest and lock had simply been copied in from the scratchpad without an install.
 
-- `@supabase/supabase-js` and `@anthropic-ai/sdk` are **present in `node_modules` but NOT
-  declared in `package.json`**. npm wrote the dependency tree, then was killed before saving
-  the manifest. `import` works on this machine; `npm ci` on Vercel installs neither.
-- `vitest` never installed at all, but `package.json` already has `"test": "vitest run"` —
-  so `npm test` currently fails with "vitest: not found", not with a failing test.
-- `package.json` name is already set to `nightingale` and the two test scripts are already
-  added. Don't redo those.
+That is the *less* dangerous version: nothing worked locally either, so it could not have
+passed locally and broken on Vercel. Fixed with `npm install`, then `npm install
+@supabase/supabase-js @anthropic-ai/sdk`, then `npm install -D vitest`. All three verified
+present in both the manifest and the lock — **check the lock, not just `package.json`: Vercel
+runs `npm ci`, which reads only the lock.**
 
-**Recovery (both commands are idempotent — just run them):**
+## The one blocker
 
-```bash
-npm install @supabase/supabase-js @anthropic-ai/sdk   # reconciles package.json + lock
-npm install -D vitest
-git diff package.json                                  # confirm all three now declared
+`GET /api/smoke?run=llm` returns:
+
 ```
+400 invalid_request_error — "anthropic-workspace-id is required when authenticating
+with an identity-linked API key; send the id of the workspace this request acts in."
+```
+
+The `ANTHROPIC_API_KEY` in `.env` is an **identity-linked key**, which must name the workspace
+each request acts in. The route already sends the header when `ANTHROPIC_WORKSPACE_ID` is set;
+it is simply unset. Two fixes, either is fine:
+
+- **Add `ANTHROPIC_WORKSPACE_ID`** to `.env` (and to Vercel) — Anthropic Console, Settings,
+  Workspaces; the id looks like `wrkspc_...`. Keeps the existing key.
+- **Or create a plain API key** in the Console and swap it in; plain keys need no header.
+
+Then re-run `curl "http://localhost:3000/api/smoke?run=llm"` and Phase 1 is closed.
 
 ## Immediate next steps, in order
 
-1. **Fix the dirty state above.** Verify with `git diff package.json` that all three packages
-   are declared — not just present on disk.
-2. **Commit the scaffold.** It is currently 9 untracked paths (`package.json`,
-   `package-lock.json`, `tsconfig.json`, `next.config.ts`, `postcss.config.mjs`,
-   `eslint.config.mjs`, `next-env.d.ts`, `src/`, `public/`).
-3. **`.env.example`** — key names only, no values, committed.
-4. **Vitest config + one trivial green test in `tests/`**, so Definition of Done gate #2
-   ("`npm test` still passes") is real from hour one rather than aspirational.
-5. **`npm run build` locally** before pushing — a red Vercel build is slower to diagnose than
-   a red local one.
-6. **Push, then add the 4 Vercel env vars** → Settings → Environment Variables, ticked for
-   Production + Preview + Development:
-   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
-   `ANTHROPIC_API_KEY`. Local `.env` is gitignored and **never reaches Vercel** — by design.
-   Env vars are read at *build* time, so **redeploy after adding them**.
-7. **Anthropic smoke call** — one route, proven once, then Phase 1 is closed.
+1. Unblock the Anthropic call (above), re-run the smoke route, confirm `ok: true`.
+2. Push, then add the env vars in Vercel, Settings, Environment Variables, ticked for
+   Production + Preview + Development: `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `ANTHROPIC_API_KEY`, and
+   `ANTHROPIC_WORKSPACE_ID` if that was the chosen fix. Local `.env` is gitignored and **never
+   reaches Vercel** — by design. Env vars are read at *build* time, so **redeploy after adding**.
+3. Confirm the deploy is green, then start Phase 2.
+4. **Before submission: delete or auth-gate `/api/smoke`.** It is public and, with `?run=llm`,
+   billable. The config-only default response is harmless; the LLM path is not.
 
 ## What the scaffold actually is
 
@@ -76,12 +82,12 @@ git diff package.json                                  # confirm all three now d
 explicit allowlist of files was copied across. Do it that way again if you ever re-scaffold:
 
 - It **refuses to run in a non-empty directory**, and this repo was never empty.
-- It **overwrites `.gitignore`** (the old trap), and now also **generates its own `CLAUDE.md`
-  and `AGENTS.md`** — which would have silently replaced the safety invariants.
+- It **overwrites `.gitignore`** (the old trap).
 - Files deliberately NOT copied: `.gitignore`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `.git`.
 
 Versions pinned by the scaffold: **Next 16.3.4, React 19.2.8, Tailwind v4, TypeScript 5**,
-App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0.
+App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0. Added since: Vitest 4.1.11,
+`@supabase/supabase-js` ^2.114, `@anthropic-ai/sdk` ^0.123.
 
 ## Open decisions awaiting Evan
 
@@ -91,11 +97,23 @@ App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0.
   expressible: `escalations.patient_session_id`, `funnel_events.session_type`. Now live in the
   database. Keep unless Evan objects.
 - **`messages.risk_provenance` is `jsonb`**, not a bare timestamp — carries
-  `{"source":"keyword"|"llm","matched":…,"at":…}` so the *deciding layer* is recorded. This is
-  the evidence for safety invariant #2. Now live.
+  `{"source":"keyword"|"llm","matched":...,"at":...}` so the *deciding layer* is recorded. This
+  is the evidence for safety invariant #2. Now live.
 
 ## Known traps
 
+- **`next dev` appends a block to `CLAUDE.md` on every run** — not just `create-next-app`, and
+  it is append-only inside `<!-- BEGIN:nextjs-agent-rules -->` markers, so the safety
+  invariants are not at risk. It re-adds itself if deleted; it is **committed** so the tree
+  stays clean. Kill it with `agentRules: false` in `next.config.ts` if it ever becomes a
+  problem. **Do check `git diff CLAUDE.md` after the first `next dev` of a session.**
+- **The Anthropic key is identity-linked** — every request needs the `anthropic-workspace-id`
+  header. `src/app/api/smoke/route.ts` sends it from `ANTHROPIC_WORKSPACE_ID` when set; any
+  *new* code path that constructs `new Anthropic()` must do the same, or it 400s.
+- **Vitest does not read `tsconfig.json` path aliases.** The `@/*` alias is declared a second
+  time in `vitest.config.mts`. Adding a new alias means editing both files.
+- **`vitest.config.mts`, not `.ts`** — as `.ts` it is loaded as CommonJS and Vite warns on
+  every run. The `.mts` extension makes the ESM syntax unambiguous.
 - **A `language sql` function body is resolved at CREATE time.** This already bit once: the
   helpers selecting from `patient_sessions` were declared above the table and the migration
   died with `relation "public.patient_sessions" does not exist`. They now live in section 9b,
@@ -114,13 +132,10 @@ App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0.
 ## Prompt to start a fresh session
 
 ```
-Read timeline.md, including the HANDOFF section, and continue Phase 1.
+Read timeline.md, including the HANDOFF section, and continue from where it says we are.
 
 Before you write anything, tell me your plan and confirm you've
 loaded CLAUDE.md by quoting safety invariant #2 back to me.
-
-Start by fixing the half-installed npm state described under
-"The dirty state" — don't build on top of it.
 
 Stack decisions already made, don't re-ask:
 Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`.
@@ -153,12 +168,13 @@ failure mode an apology in the brief cannot recover.
 
 ## Phase 1 — Scaffold + schema + deploy hello-world (1.0h)
 
-- [~] Scaffold Next.js at repo root (no subfolder) — files copied in, **npm install incomplete**, uncommitted
+- [x] Scaffold Next.js at repo root (no subfolder) — installed, committed `37d2b32`, `npm run build` green
 - [x] Supabase project + the 7 tables — run and verified Sep 2: both VERDICT rows `✓ PASS`, 7 tables RLS-on, 13 policies, `audit_logs` has no content column
-- [ ] `.env.example` committed; real `.env` never staged (`.env` confirmed gitignored + untracked)
-- [ ] Deploy to Vercel **immediately** — something must always be live
-- [ ] Anthropic API key wired, one smoke call proven
-- [ ] Vitest wired so `npm test` is green (Definition of Done gate #2)
+- [x] `.env.example` committed; real `.env` never staged (`.env` confirmed gitignored + untracked)
+- [ ] Deploy to Vercel **immediately** — something must always be live *(Evan: env vars + redeploy)*
+- [~] Anthropic API key wired via `/api/smoke?run=llm` — **blocked on `ANTHROPIC_WORKSPACE_ID`**, see HANDOFF
+- [x] Vitest wired so `npm test` is green (Definition of Done gate #2) — 6 tests, ~250ms
+- [x] Supabase reachable from the app; RLS confirmed returning no rows to the anon key
 
 ## Phase 2 — Guest flow: 4 channels, rules config, value_event (2.0h)
 
