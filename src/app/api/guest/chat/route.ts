@@ -1,0 +1,153 @@
+import { NextResponse } from "next/server";
+import { askClaude } from "@/lib/anthropic";
+import { CLINIC_ID, CLINIC_NAME } from "@/lib/clinic";
+import { logFunnelEvent } from "@/lib/funnel";
+import {
+  insertLeadMessage,
+  loadLeadMessages,
+  loadLeadSession,
+} from "@/lib/leadSessions";
+import { redact, toRedactedTurns } from "@/lib/redaction";
+
+/**
+ * Guest chat. POST { leadSessionId, message }.
+ *
+ * ORDER OF OPERATIONS IS THE SAFETY PROPERTY (CLAUDE.md invariant #5):
+ *   1. load + validate the session
+ *   2. redact the raw message
+ *   3. store BOTH forms
+ *   4. build the model payload from redacted history ONLY
+ *   5. call the model
+ *   6. store the reply
+ *   7. log the value_event
+ *
+ * Steps 2 and 3 happen before step 5 has any chance to run. The compiler
+ * enforces it too: askClaude() accepts only branded `Redacted` turns.
+ */
+
+// Opus 5 thinks adaptively before answering, so a reply can exceed Vercel's
+// short default. 60s is the Hobby-plan ceiling and is far more headroom than
+// a guest question needs.
+export const maxDuration = 60;
+
+const MAX_MESSAGE_CHARS = 2000;
+
+const SYSTEM_PROMPT = `You are the AI assistant for ${CLINIC_NAME}, talking to someone who has NOT signed up and has given no personal details. Your job is to be genuinely, immediately useful before the clinic asks them for anything.
+
+HARD RULES — these are not style preferences:
+- You are an AI, not a doctor. If asked whether you are a real doctor, a nurse, or a human, say plainly that you are not and that a real clinician can pick this up.
+- NEVER diagnose. Do not say "you have X" or "this is X". Describe possibilities and what usually matters, and say what would make it worth seeing someone.
+- NEVER recommend starting, stopping or changing a medication or a dose.
+- If something is ambiguous, say honestly that you are not sure. Never offer false reassurance to make someone feel better.
+- If anything they describe could be an emergency — severe chest pain, trouble breathing, heavy bleeding, thoughts of harming themselves — say so directly and tell them to stop and call 999 now.
+
+ABOUT THE TEXT YOU RECEIVE:
+Identifying details are stripped before anything reaches you, so you will see tokens like [REDACTED_NAME], [REDACTED_PHONE] or [REDACTED_ID]. That is working as intended. Never ask the person to repeat them, and never ask for a full name, IC number, phone number or address.
+
+STYLE:
+Warm, plain, and short — two to four sentences. Ask at most one follow-up question. Give them one concrete useful thing per reply (what to watch for, what usually helps, when it is worth being seen) rather than only asking questions back.`;
+
+export async function POST(request: Request) {
+  let body: { leadSessionId?: string; message?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const leadSessionId = body.leadSessionId?.trim();
+  const rawMessage = body.message?.trim();
+
+  if (!leadSessionId || !rawMessage) {
+    return NextResponse.json(
+      { error: "leadSessionId and message are both required." },
+      { status: 400 },
+    );
+  }
+  if (rawMessage.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json(
+      { error: `Message is too long (max ${MAX_MESSAGE_CHARS} characters).` },
+      { status: 413 },
+    );
+  }
+
+  // 1. Session must exist and not be expired.
+  const lead = await loadLeadSession(leadSessionId);
+  if (!lead) {
+    return NextResponse.json(
+      { error: "This conversation has expired. Start a new one." },
+      { status: 404 },
+    );
+  }
+
+  // 2 + 3. Redact, then store both forms. `content` is the clinical record of
+  // what they actually typed; `redacted_content` is the only form allowed out.
+  const { redacted, found } = redact(rawMessage);
+  await insertLeadMessage({
+    leadSessionId: lead.id,
+    role: "user",
+    content: rawMessage,
+    redactedContent: redacted,
+  });
+
+  // 4. Payload built from redacted_content only — see toRedactedTurns().
+  const history = await loadLeadMessages(lead.id);
+  const turns = toRedactedTurns(history);
+
+  // 5. The only outbound call.
+  let reply: string;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  try {
+    const result = await askClaude({ system: SYSTEM_PROMPT, turns });
+    reply = result.text;
+    inputTokens = result.inputTokens;
+    outputTokens = result.outputTokens;
+  } catch (cause) {
+    console.error("guest chat LLM call failed:", (cause as Error).message);
+    return NextResponse.json(
+      {
+        error:
+          "I could not get a reply just now. Please try again — and if this is " +
+          "urgent, call the clinic or dial 999.",
+      },
+      { status: 502 },
+    );
+  }
+
+  if (!reply) {
+    return NextResponse.json({ error: "Empty reply from the model." }, { status: 502 });
+  }
+
+  // 6. Store the reply. It is model output built from redacted input, so both
+  // columns hold the same text.
+  const stored = await insertLeadMessage({
+    leadSessionId: lead.id,
+    role: "assistant",
+    content: reply,
+    redactedContent: reply,
+  });
+
+  // 7. The guest got something useful for free. PHI-free metadata only —
+  // counts and ids, never a word of what was said.
+  await logFunnelEvent({
+    sessionId: lead.id,
+    sessionType: "lead",
+    eventType: "value_event",
+    metadata: {
+      clinic_id: CLINIC_ID,
+      source_channel: lead.source_channel,
+      redaction_kinds: found.join(",") || "none",
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+    },
+  });
+
+  return NextResponse.json({
+    id: stored.id,
+    reply,
+    // Surfaced so the UI can tell the guest what was removed before sending.
+    // Kinds only — never the values.
+    redacted: found,
+  });
+}

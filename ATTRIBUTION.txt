@@ -12,13 +12,41 @@ Format:
 FRAMEWORKS & LIBRARIES
 --------------------------------------------------------------------
 
-(TODO — added during Phase 1 onward)
+next — 16.3.4 — MIT — https://github.com/vercel/next.js
+  purpose: App Router, server components, route handlers, production build.
+
+react — 19.2.8 — MIT — https://github.com/facebook/react
+react-dom — 19.2.8 — MIT — https://github.com/facebook/react
+  purpose: UI rendering; the guest chat is a client component.
+
+@supabase/supabase-js — 2.114.0 — MIT — https://github.com/supabase/supabase-js
+  purpose: Postgres access. Two clients: RLS-bound (publishable key) and
+  server-only admin (secret key).
+
+@anthropic-ai/sdk — 0.123.0 — MIT — https://github.com/anthropics/anthropic-sdk-typescript
+  purpose: the single outbound LLM call path (src/lib/anthropic.ts).
+
+tailwindcss — 4.3.3 — MIT — https://github.com/tailwindlabs/tailwindcss
+@tailwindcss/postcss — 4.x — MIT — https://github.com/tailwindlabs/tailwindcss
+  purpose: styling.
+
+typescript — 5.9.3 — Apache-2.0 — https://github.com/microsoft/TypeScript
+  purpose: types; also enforces safety invariant #5 via the `Redacted` brand.
+
+vitest — 4.1.11 — MIT — https://github.com/vitest-dev/vitest
+  purpose: `npm test` — the safety test suite.
+
+eslint — 9.x — MIT — https://github.com/eslint/eslint
+eslint-config-next — 16.3.4 — MIT — https://github.com/vercel/next.js
+  purpose: linting.
 
 --------------------------------------------------------------------
 HOSTED SERVICES
 --------------------------------------------------------------------
 
-(TODO — Supabase, Vercel, Anthropic API)
+Supabase — https://supabase.com — Postgres, Row Level Security, auth.
+Vercel — https://vercel.com — hosting and serverless functions.
+Anthropic API (claude-opus-5) — https://anthropic.com — the intake assistant.
 
 --------------------------------------------------------------------
 AI ASSISTANCE
@@ -33,5 +61,8 @@ ASSETS / DATA
 --------------------------------------------------------------------
 
 All patient data in this project is SYNTHETIC. No real patient data is used.
+The clinic ("Sunway Family Clinic"), its services, campaigns, and the names in
+src/lib/redaction.ts SYNTHETIC_NAMES are all invented for this demo.
 
-(TODO — fonts, icons, images)
+Geist and Geist Mono — SIL Open Font License 1.1 — https://vercel.com/font
+  purpose: UI typeface, loaded via next/font/google.

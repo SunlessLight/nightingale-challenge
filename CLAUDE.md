@@ -53,6 +53,23 @@ These are not preferences. A change that violates one of these is wrong even if 
 8. **Emergency disclaimer renders under the chat box** ("If this is an emergency, exit
    Nightingale and dial 999"). **Synthetic data only** — never real patient data.
 
+### How these are enforced in code (not by remembering)
+
+- **Invariant #5 is enforced by the type system.** `redact()` in `src/lib/redaction.ts`
+  returns a *branded* `Redacted` string, and `askClaude()` in `src/lib/anthropic.ts` accepts
+  nothing else. Passing a raw `messages.content` is a compile error. The brand cannot be
+  minted outside `redaction.ts`, so `toRedactedTurns()` is the only DB→model path.
+  **Never add a cast to get around this** — that is the refactor this design exists to stop.
+  The brand is erased at runtime, so `tests/redaction.test.ts` also asserts on the real bytes.
+- **Untrusted URL params are sanitised at the boundary** (`cleanParam()` in
+  `src/app/start/route.ts`). `?topic=` is spoken in the assistant's own voice and replayed to
+  the model every turn, which makes it a prompt-injection vector, not just an XSS one.
+- **Channel behaviour is one first-match-wins table** in `src/lib/channels.ts`, never
+  scattered conditionals. The last row has no matchers, so `resolveOpening()` is total.
+  Time buckets use `Intl` in **Asia/Kuala_Lumpur** — Vercel runs UTC, 8h behind the clinic.
+- **Any count shown to a patient is a real DB count.** `value_event` counts **distinct
+  `session_id`**, because the copy says "N *people*". Zero renders nothing, never "0".
+
 ---
 
 ## Definition of Done (the anti-compounding gate)

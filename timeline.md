@@ -10,37 +10,33 @@
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~23:10, start of Phase 2)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~00:20, start of Phase 3)
 
 ## Where we are
 
-**Phases 0 and 1 are done. The app is live on Vercel and publicly reachable.** Next up is
-Phase 2 (guest flow: 4 channels, rules config, value_event).
+**Phases 0, 1 and 2 are done.** The guest flow works end to end in production: four channels,
+one rules table, redaction before the LLM, and a real value_event count. Next up is Phase 3
+(auth + consent + LeadSession → PatientSession conversion).
 
-Live: https://nightingaleai-challenge.vercel.app — landing page 200, `/api/smoke` green on
-env + Supabase, verified anonymously (not just from Evan's logged-in browser).
+Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
+Evan's logged-in browser.
 
-## DO THIS FIRST — one dashboard action, not a code change
+## Nothing is blocking
 
-`/api/smoke?run=llm` **fails in production** with `400 anthropic-workspace-id is required`.
-Vercel is still holding the **original identity-linked Anthropic key**; Evan swapped a plain
-key into his local `.env`, and Vercel keeps its own separate copy that did not follow.
+The Phase 1 blocker is cleared: Vercel now holds the plain Anthropic key, and
+`/api/smoke?run=llm` returns `"anthropic":{"called":true,"ok":true,"model":"claude-opus-5"}`.
 
-Fix: Vercel, Settings, Environment Variables, edit `ANTHROPIC_API_KEY` to the same plain key
-that is in the local `.env`, then **Redeploy**. Confirm with:
+## What Phase 3 must not break
 
-```
-curl "https://nightingaleai-challenge.vercel.app/api/smoke?run=llm"
-```
-
-Expect `"anthropic":{"called":true,"ok":true,...}`. Until that passes, no LLM feature will
-work in production even though every one of them works locally.
-
-## Then: Phase 2
-
-Read the Phase 2 checklist below. Two standing ordering rules from the top of this file still
-apply — build the demo path first, and Phase 4's emergency-phrase tests get written before
-Phase 4's implementation.
+- **Do not re-ask a guest anything.** `lead_sessions.converted_patient_id` and
+  `patient_sessions.origin_lead_session_id` already exist; conversion sets both and carries
+  `messages` across by leaving `session_type='lead'` rows where they are, with
+  `profile_items.provenance_pointer` still pointing at the ORIGINAL guest message.
+- **Redaction stays structural.** `askClaude()` accepts only the branded `Redacted` type.
+  Any new LLM call site must build turns via `toRedactedTurns()`; nothing else can mint the
+  brand. Do not add a cast to get around it.
+- **`resolveOpening()` already has an `identity_level: "identified"` row** for returning
+  patients. Phase 3 raises `identity_level` — the greeting is already written and tested.
 
 ## Time budget — honest state
 
@@ -57,9 +53,9 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 |---|---|
 | Supabase project, 7 tables, RLS | OK — `0001_init.sql` + `verify_rls.sql` both run, both VERDICT rows PASS |
 | Local `.env` | OK — 4 keys, gitignored, verified untracked |
-| Vercel env vars | Partial — 4 set, but `ANTHROPIC_API_KEY` is the wrong (identity-linked) key. See above. |
+| Vercel env vars | OK — 4 set; `ANTHROPIC_API_KEY` swapped to the plain key and redeployed |
 | Vercel deploy | OK — Framework Preset = Next.js, Deployment Protection off, public |
-| Anthropic key | Plain key locally; identity-linked key still on Vercel |
+| Anthropic key | Plain key in both places; `/api/smoke?run=llm` green in production |
 
 ## Known traps
 
@@ -123,10 +119,9 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 - **`messages.risk_provenance` is `jsonb`**, not a bare timestamp — carries
   `{"source":"keyword"|"llm","matched":...,"at":...}` so the *deciding layer* is recorded. This
   is the evidence for safety invariant #2. Live.
-- **Model: `claude-opus-5`.** Considered Sonnet 5 and rejected for now — the cost gap across
-  the whole build is roughly $3, and ambiguous-symptom judgement (invariant #4) is the
-  highest-graded behaviour. When Phase 2 adds the first real call site, put the model id in
-  `src/lib/models.ts` so switching is one line. Revisit only if demo latency is measurably bad.
+- **Model: `claude-opus-5`** — settled, id isolated in `src/lib/models.ts`. Measured in Phase 2
+  at **~5.1-5.8s** and **~$0.0085 per guest message** (703 input / 199 output tokens at
+  $5/$25 per 1M). Fine for a typing indicator; revisit only if Phase 4 pushes it past ~8s.
 
 ## Before submission
 
@@ -137,21 +132,21 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 
 ```
 Read timeline.md, including the HANDOFF section, and continue from where it
-says we are. We're starting Phase 2 (guest flow: 4 channels, rules config,
-value_event).
+says we are. We're starting Phase 3 (auth + consent + LeadSession to
+PatientSession conversion).
 
 Before you write anything: tell me your plan, and confirm you've loaded
 CLAUDE.md by quoting safety invariant #2 back to me.
 
-Then verify the handoff's "DO THIS FIRST" item is actually done:
-  curl "https://nightingaleai-challenge.vercel.app/api/smoke?run=llm"
-It should return "anthropic":{"called":true,"ok":true,...}. If it still 400s,
-tell me before building anything on top of it.
+Already done - do not redo:
+- Phase 2 shipped. Four channels, one rules table, redaction enforced by a
+  branded `Redacted` type, real value_event count. 37 tests green.
+- Production LLM calls work; /api/smoke?run=llm is green anonymously.
 
 Stack decisions already made - don't re-ask:
-Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`,
-everything at the repo root (no subfolder), model is claude-opus-5.
-Put the model id in src/lib/models.ts so switching it later is one line.
+Next.js App Router + TypeScript + Tailwind, npm, Vitest, everything at the
+repo root, model claude-opus-5 with the id in src/lib/models.ts. Chat is
+non-streaming with a typing indicator.
 
 How I want you to work:
 - I'm a beginner. Explain mechanisms as they come up rather than just
@@ -163,19 +158,13 @@ How I want you to work:
 - Verify anything deployed as an anonymous stranger (curl or incognito),
   never from my logged-in browser.
 
-Two Phase 2 requirements that are easy to skip and are directly graded:
-- Redaction runs BEFORE any text reaches the LLM (safety invariant #5).
-  Store both content and redacted_content; only the redacted form leaves
-  our server.
-- The value_event counter must be a real DB count, not a hardcoded number.
-  If the count is 0, show nothing.
+The Phase 3 requirement that is easy to get wrong:
+- Conversion must re-ask NOTHING. The guest's messages and their provenance
+  survive the guest->patient transition intact.
 
-Time: deadline is Thurs Sep 3, 1:00 PM SGT. Phases 2-7 are budgeted 10h with
-no slack. If we slip, cut in the order at the top of timeline.md - and never
-cut from Phase 4.
-
-docs/BUILD_PLAN.md and the brief PDF in docs/ are background spec, but
-timeline.md owns the phase list and its ~11h budget supersedes BUILD_PLAN's ~24h.
+Time: deadline Thurs Sep 3, 1:00 PM SGT. Phases 3-7 are budgeted ~8h with no
+slack. If we slip, cut in the order at the top of timeline.md - and never cut
+from Phase 4.
 ```
 ---
 
@@ -197,14 +186,6 @@ failure mode an apology in the brief cannot recover.
   end to end before polishing anything off-path.
 
 ---
-
-## Phase 2 — Guest flow: 4 channels, rules config, value_event (2.0h)
-
-- [ ] 4 entry points: `staff_referral`, `social_comment`, `instagram_ad_click`/`google_ad_click`, `website_widget`
-- [ ] Ad-click channels are just query params (`?source=instagram_ad&campaign=…`) — nearly free
-- [ ] Channel rules as **one config file/table** (channel × identity_level × time_of_day → opening message), not scattered if-statements
-- [ ] Guest chat with redaction applied before any LLM call
-- [ ] value_event counter — a **real** DB count ("N people asked this clinic a question this week"); if 0, show nothing
 
 ## Phase 3 — Auth + consent + conversion (1.5h)
 
@@ -266,6 +247,31 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 ---
 
 ## Shipped
+
+### ✓ Phase 2 — Guest flow: 4 channels, rules config, value_event (Sep 3, 2026)
+
+- `/start?source=…` is the single entry route for all four channels; it inserts the
+  `lead_session`, stores the channel-appropriate opening as a real assistant message, logs
+  `lead_created`, and 302s to `/guest/<uuid>` — id in the path, not a cookie, which also
+  gives session recovery for free
+- Redaction is enforced by the **type system**: `redact()` returns a branded `Redacted`
+  string and `askClaude()` accepts nothing else, so passing raw `content` is a compile error.
+  Proved at runtime by reading a row back out of Supabase — `content` holds the name/NRIC/
+  phone, `redacted_content` holds `[REDACTED_NAME]`/`[REDACTED_ID]`/`[REDACTED_PHONE]`
+- Channel rules are one first-match-wins table in `src/lib/channels.ts`. Time buckets use
+  `Intl` in **Asia/Kuala_Lumpur**, not server time — Vercel runs UTC, 8h behind, so a naive
+  `getHours()` greets a 9am patient with the after-hours message. The after-hours row is
+  deliberately **first** so it outranks channel flavour: claiming a human is standing by at
+  2am is a small lie, and this build is graded on trust
+- value_event counter is a real DB count of **distinct `session_id`** over 7 days, filtered
+  in-Postgres with the jsonb `@>` operator. Verified live: rows 1→2→3 while distinct people
+  went 1→1→2, so a chatty guest counts once. `count === 0` renders nothing, not "0 people"
+- Untrusted `?topic=`/`?campaign=` params are sanitised at the boundary because the topic is
+  spoken in the assistant's voice and replayed to the model — a **prompt-injection** vector,
+  not just an XSS one
+- 37 tests green (was 6); `npm run build` green; all four channels clicked through; guest
+  chat measured at **~5.1–5.8s** and **~$0.0085/message** (703 in / 199 out at Opus 5's
+  $5/$25 per 1M)
 
 ### ✓ Phase 1 — Scaffold + schema + deploy (Sep 2, 2026)
 

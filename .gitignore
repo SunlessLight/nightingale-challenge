@@ -41,3 +41,6 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# TypeScript incremental build cache (written by `tsc --noEmit`)
+*.tsbuildinfo
