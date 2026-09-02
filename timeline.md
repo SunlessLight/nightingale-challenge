@@ -136,21 +136,46 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 ## Prompt to start a fresh session
 
 ```
-Read timeline.md, including the HANDOFF section, and continue from where it says we are.
+Read timeline.md, including the HANDOFF section, and continue from where it
+says we are. We're starting Phase 2 (guest flow: 4 channels, rules config,
+value_event).
 
-Before you write anything, tell me your plan and confirm you've
-loaded CLAUDE.md by quoting safety invariant #2 back to me.
+Before you write anything: tell me your plan, and confirm you've loaded
+CLAUDE.md by quoting safety invariant #2 back to me.
 
-Stack decisions already made, don't re-ask:
-Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`.
-Everything at the repo root — no subfolder. Model is claude-opus-5.
+Then verify the handoff's "DO THIS FIRST" item is actually done:
+  curl "https://nightingaleai-challenge.vercel.app/api/smoke?run=llm"
+It should return "anthropic":{"called":true,"ok":true,...}. If it still 400s,
+tell me before building anything on top of it.
 
-I'm a beginner — explain mechanisms as they come up rather than just
-reporting status, and show the arithmetic when money or latency is involved.
+Stack decisions already made - don't re-ask:
+Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`,
+everything at the repo root (no subfolder), model is claude-opus-5.
+Put the model id in src/lib/models.ts so switching it later is one line.
 
-docs/BUILD_PLAN.md and the brief PDF in docs/ are background spec,
-but timeline.md owns the phase list and its ~11h budget supersedes
-BUILD_PLAN's ~24h one.
+How I want you to work:
+- I'm a beginner. Explain mechanisms as they come up rather than just
+  reporting status, and show the arithmetic when money or latency matters.
+- Don't tell me something works until you've actually run it. "It compiles"
+  is not evidence - that's the Definition of Done in CLAUDE.md.
+- When you diagnose something, separate what you measured from what you
+  inferred, and say which is which.
+- Verify anything deployed as an anonymous stranger (curl or incognito),
+  never from my logged-in browser.
+
+Two Phase 2 requirements that are easy to skip and are directly graded:
+- Redaction runs BEFORE any text reaches the LLM (safety invariant #5).
+  Store both content and redacted_content; only the redacted form leaves
+  our server.
+- The value_event counter must be a real DB count, not a hardcoded number.
+  If the count is 0, show nothing.
+
+Time: deadline is Thurs Sep 3, 1:00 PM SGT. Phases 2-7 are budgeted 10h with
+no slack. If we slip, cut in the order at the top of timeline.md - and never
+cut from Phase 4.
+
+docs/BUILD_PLAN.md and the brief PDF in docs/ are background spec, but
+timeline.md owns the phase list and its ~11h budget supersedes BUILD_PLAN's ~24h.
 ```
 ---
 
