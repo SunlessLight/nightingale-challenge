@@ -269,9 +269,11 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 - Untrusted `?topic=`/`?campaign=` params are sanitised at the boundary because the topic is
   spoken in the assistant's voice and replayed to the model — a **prompt-injection** vector,
   not just an XSS one
-- 37 tests green (was 6); `npm run build` green; all four channels clicked through; guest
-  chat measured at **~5.1–5.8s** and **~$0.0085/message** (703 in / 199 out at Opus 5's
-  $5/$25 per 1M)
+- 37 tests green (was 6); `npm run build` green. Verified **anonymously by curl against the
+  deployed URL** — all four channels 302, guest page 200, chat 200, and the production row
+  read back out of Supabase shows raw PII in `content` and masked text in `redacted_content`.
+  Latency ~5.8–6.7s in production (~5.1–5.8s local); **~$0.0085/message** (703 in / 199 out
+  at Opus 5's $5/$25 per 1M)
 
 ### ✓ Phase 1 — Scaffold + schema + deploy (Sep 2, 2026)
 
