@@ -29,40 +29,6 @@ as $fn$
   );
 $fn$;
 
--- security definer: these are called from INSIDE policies on other
--- tables, so they must bypass RLS on patient_sessions or they would
--- return false for the very rows they are meant to authorise.
--- search_path is pinned to prevent search_path hijacking.
-create or replace function public.owns_patient_session(p_session_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $fn$
-  select exists (
-    select 1
-    from public.patient_sessions ps
-    where ps.id = p_session_id
-      and ps.auth_user_id = auth.uid()
-  );
-$fn$;
-
-create or replace function public.session_is_consented(p_session_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $fn$
-  select exists (
-    select 1
-    from public.patient_sessions ps
-    where ps.id = p_session_id
-      and ps.consent_at is not null
-  );
-$fn$;
-
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -282,6 +248,50 @@ create index if not exists idx_funnel_events_type
 create index if not exists idx_audit_logs_actor
   on public.audit_logs (actor_id, created_at desc);
 
+
+-- ------------------------------------------------------------
+-- 9b. Table-reading helper functions
+--
+-- ORDERING IS LOAD-BEARING — do not move these back to the top.
+-- A `language sql` function body is parsed and resolved at CREATE
+-- time, so these cannot be declared before the tables they select
+-- from. (`language plpgsql` is only syntax-checked, which is why
+-- set_updated_at can live up in section 1.)
+-- ------------------------------------------------------------
+
+-- security definer: these are called from INSIDE policies on other
+-- tables, so they must bypass RLS on patient_sessions or they would
+-- return false for the very rows they are meant to authorise.
+-- search_path is pinned to prevent search_path hijacking.
+create or replace function public.owns_patient_session(p_session_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select exists (
+    select 1
+    from public.patient_sessions ps
+    where ps.id = p_session_id
+      and ps.auth_user_id = auth.uid()
+  );
+$fn$;
+
+create or replace function public.session_is_consented(p_session_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select exists (
+    select 1
+    from public.patient_sessions ps
+    where ps.id = p_session_id
+      and ps.consent_at is not null
+  );
+$fn$;
 
 -- ------------------------------------------------------------
 -- 10. Row Level Security — enable + policies, together
