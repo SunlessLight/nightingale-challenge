@@ -32,7 +32,7 @@ failure mode an apology in the brief cannot recover.
 ## Phase 1 — Scaffold + schema + deploy hello-world (1.0h)
 
 - [ ] Scaffold Next.js at repo root (no subfolder)
-- [ ] Supabase project + the 7 tables from CLAUDE.md, **each with RLS enabled in the same migration**
+- [ ] Supabase project + the 7 tables — **SQL already written**: paste `supabase/migrations/0001_init.sql` into the SQL Editor, then run `supabase/verify_rls.sql` and confirm 7 rows, all `rls_enabled = true`, all `policies >= 1`
 - [ ] `.env.example` committed; real `.env.local` never staged
 - [ ] Deploy to Vercel **immediately** — something must always be live
 - [ ] Anthropic API key wired, one smoke call proven
