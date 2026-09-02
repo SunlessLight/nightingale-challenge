@@ -1,0 +1,37 @@
+NIGHTINGALE 48-HOUR BUILD — ATTRIBUTION
+Evan Yeoh · September 2026
+
+Append to this file as each dependency is added. Reconstructing it at 3am is how
+licenses get missed.
+
+Format:
+  <name> — <version> — <license> — <url>
+  purpose: <one line>
+
+--------------------------------------------------------------------
+FRAMEWORKS & LIBRARIES
+--------------------------------------------------------------------
+
+(TODO — added during Phase 1 onward)
+
+--------------------------------------------------------------------
+HOSTED SERVICES
+--------------------------------------------------------------------
+
+(TODO — Supabase, Vercel, Anthropic API)
+
+--------------------------------------------------------------------
+AI ASSISTANCE
+--------------------------------------------------------------------
+
+Claude Code (Anthropic) was used as a coding assistant throughout this build:
+scaffolding, implementation, and documentation. All architecture and safety
+decisions were reviewed by the author.
+
+--------------------------------------------------------------------
+ASSETS / DATA
+--------------------------------------------------------------------
+
+All patient data in this project is SYNTHETIC. No real patient data is used.
+
+(TODO — fonts, icons, images)
