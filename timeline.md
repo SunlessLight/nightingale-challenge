@@ -10,46 +10,106 @@
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 2, 2026, mid-Phase-1)
+# 📍 HANDOFF — read this first (updated Sep 2, 2026, ~21:50, mid-Phase-1)
 
 ## Where we are
 
-**Phase 0 scaffold: done and committed.** Phase 1 is **in progress, not finished.**
+**Phase 0: done. Phase 1: database is DONE and verified. Scaffold is HALF-INSTALLED —
+read "The dirty state" below before running anything.**
 
-Accounts and keys are set up *outside* the repo, so a fresh session cannot see them:
+Accounts and keys live *outside* the repo, so a fresh session cannot see them:
 
 | Thing | State |
 |---|---|
-| Supabase project | ✅ Created ("enable RLS for all tables" ticked at creation) |
-| Supabase URL + publishable key + secret key | ✅ In local `.env` (gitignored — verified untracked) |
-| Anthropic API key | ✅ In local `.env` |
-| Vercel account + repo imported | ✅ Done via GitHub |
-| **`0001_init.sql` actually RUN in Supabase** | ❌ **NOT YET — this is where Evan stopped** |
-| **`verify_rls.sql` run** | ❌ Not started |
-| **Vercel environment variables added** | ❌ Not done — see below |
-| Next.js scaffold (`package.json` etc.) | ❌ Not started — repo is still docs + SQL only |
+| Supabase project + `.env` (URL, publishable key, secret key, Anthropic key) | ✅ `.env` present, gitignored, verified untracked |
+| **`0001_init.sql` run in Supabase** | ✅ **DONE** — succeeded after the ordering fix below |
+| **`verify_rls.sql` run** | ✅ **DONE** — both VERDICT rows `✓ PASS`; 7 tables RLS-on, 13 policies, `audit_logs` 6 columns, no content column |
+| Next.js scaffold files in repo | ⚠️ Copied in, **uncommitted**, install incomplete |
+| Vercel environment variables added | ❌ Not done |
+| First Vercel deploy green | ❌ Not done |
+| Anthropic smoke call proven | ❌ Not done |
+| Vitest wired to `npm test` | ❌ Not done |
+
+## The dirty state — fix this first
+
+An `npm install` was interrupted mid-flight. The result is **inconsistent, and it fails in a
+way that passes locally and breaks on Vercel**:
+
+- `@supabase/supabase-js` and `@anthropic-ai/sdk` are **present in `node_modules` but NOT
+  declared in `package.json`**. npm wrote the dependency tree, then was killed before saving
+  the manifest. `import` works on this machine; `npm ci` on Vercel installs neither.
+- `vitest` never installed at all, but `package.json` already has `"test": "vitest run"` —
+  so `npm test` currently fails with "vitest: not found", not with a failing test.
+- `package.json` name is already set to `nightingale` and the two test scripts are already
+  added. Don't redo those.
+
+**Recovery (both commands are idempotent — just run them):**
+
+```bash
+npm install @supabase/supabase-js @anthropic-ai/sdk   # reconciles package.json + lock
+npm install -D vitest
+git diff package.json                                  # confirm all three now declared
+```
 
 ## Immediate next steps, in order
 
-1. **Run [supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql)** — paste the whole file into the Supabase SQL Editor. It is **idempotent**: if it errors partway, fix the error and re-run the *entire file*. Do not hand-patch a half-built database.
-2. **Run [supabase/verify_rls.sql](supabase/verify_rls.sql)** — expect **7 rows, every `rls_enabled = true`, every `policies >= 1`**. This is the evidence for safety invariant #7.
-3. **Add the 4 env vars in Vercel** → Project → Settings → Environment Variables, ticked for Production + Preview + Development:
-   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `ANTHROPIC_API_KEY`.
-   The local `.env` is gitignored and **never reaches Vercel** — that is by design, not a bug. Env vars are read at *build* time, so redeploy after adding them.
-4. **Scaffold Next.js at the repo root** and get a hello-world live on Vercel.
+1. **Fix the dirty state above.** Verify with `git diff package.json` that all three packages
+   are declared — not just present on disk.
+2. **Commit the scaffold.** It is currently 9 untracked paths (`package.json`,
+   `package-lock.json`, `tsconfig.json`, `next.config.ts`, `postcss.config.mjs`,
+   `eslint.config.mjs`, `next-env.d.ts`, `src/`, `public/`).
+3. **`.env.example`** — key names only, no values, committed.
+4. **Vitest config + one trivial green test in `tests/`**, so Definition of Done gate #2
+   ("`npm test` still passes") is real from hour one rather than aspirational.
+5. **`npm run build` locally** before pushing — a red Vercel build is slower to diagnose than
+   a red local one.
+6. **Push, then add the 4 Vercel env vars** → Settings → Environment Variables, ticked for
+   Production + Preview + Development:
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
+   `ANTHROPIC_API_KEY`. Local `.env` is gitignored and **never reaches Vercel** — by design.
+   Env vars are read at *build* time, so **redeploy after adding them**.
+7. **Anthropic smoke call** — one route, proven once, then Phase 1 is closed.
+
+## What the scaffold actually is
+
+`create-next-app` was run **in a scratchpad directory, not in this repo**, and only an
+explicit allowlist of files was copied across. Do it that way again if you ever re-scaffold:
+
+- It **refuses to run in a non-empty directory**, and this repo was never empty.
+- It **overwrites `.gitignore`** (the old trap), and now also **generates its own `CLAUDE.md`
+  and `AGENTS.md`** — which would have silently replaced the safety invariants.
+- Files deliberately NOT copied: `.gitignore`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `.git`.
+
+Versions pinned by the scaffold: **Next 16.3.4, React 19.2.8, Tailwind v4, TypeScript 5**,
+App Router + `src/` + `@/*` alias. Node 24.14.0, npm 11.9.0.
 
 ## Open decisions awaiting Evan
 
-- **Supabase GitHub integration** — recommended **disconnected**. It auto-runs migrations on every push to `main`, which will collide with the manual SQL-Editor path above ("table already exists") and turns a typo into a 3am CI debug. Unconfirmed whether Evan disconnected it.
-- **Two additive columns** were added beyond the locked CLAUDE.md schema, both to make RLS policies expressible: `escalations.patient_session_id` and `funnel_events.session_type`. Keep unless Evan objects.
-- **`messages.risk_provenance` is `jsonb`**, not the bare timestamp the brief names — it carries `{"source":"keyword"|"llm","matched":…,"at":…}` so the deciding layer is recorded. This is the evidence for safety invariant #2. Superset of the brief; revertible.
+- **Supabase GitHub integration** — recommended **disconnected**; it would auto-run migrations
+  on push and collide with the manual SQL-Editor path. Still unconfirmed.
+- **Two additive columns** beyond the locked CLAUDE.md schema, both so RLS policies are
+  expressible: `escalations.patient_session_id`, `funnel_events.session_type`. Now live in the
+  database. Keep unless Evan objects.
+- **`messages.risk_provenance` is `jsonb`**, not a bare timestamp — carries
+  `{"source":"keyword"|"llm","matched":…,"at":…}` so the *deciding layer* is recorded. This is
+  the evidence for safety invariant #2. Now live.
 
 ## Known traps
 
-- **`create-next-app` may overwrite `.gitignore`.** Immediately after scaffolding, run `git check-ignore -v .env` and confirm it is still ignored. A leaked key cannot be un-leaked from git history.
-- **The first Vercel deploy will fail** — there is no `package.json` yet. Expected, not a bug. It goes green after the scaffold.
-- **Staff role lives in the JWT**, not a table (`is_staff()` reads `app_metadata.role`). After granting the role via SQL, the account **must sign out and back in** or `is_staff()` stays false.
-- **RLS failures are silent** — an empty array, no error. When a query returns nothing, "did I write a policy for that table?" is the first thing to check, not the tenth.
+- **A `language sql` function body is resolved at CREATE time.** This already bit once: the
+  helpers selecting from `patient_sessions` were declared above the table and the migration
+  died with `relation "public.patient_sessions" does not exist`. They now live in section 9b,
+  after the tables. `language plpgsql` is only syntax-checked, which is why `set_updated_at`
+  is fine up in section 1. **Do not "tidy" the helpers back to the top.**
+- **The Supabase SQL Editor renders only the LAST result set** when you paste multiple
+  statements. `verify_rls.sql` is now deliberately ONE `union all` query for this reason.
+- **RLS failures are silent** — empty array, no error. `rls_enabled=true` with `policies=0`
+  is *locked shut* and looks identical to "no data yet". When a query returns nothing, check
+  policies first, not tenth.
+- **Staff role lives in the JWT**, not a table (`is_staff()` reads `app_metadata.role`). After
+  granting it via SQL the account **must sign out and back in** or `is_staff()` stays false.
+- **`git check-ignore -v .env`** after anything touches `.gitignore`. A leaked key cannot be
+  un-leaked from git history.
 
 ## Prompt to start a fresh session
 
@@ -59,6 +119,9 @@ Read timeline.md, including the HANDOFF section, and continue Phase 1.
 Before you write anything, tell me your plan and confirm you've
 loaded CLAUDE.md by quoting safety invariant #2 back to me.
 
+Start by fixing the half-installed npm state described under
+"The dirty state" — don't build on top of it.
+
 Stack decisions already made, don't re-ask:
 Next.js App Router + TypeScript + Tailwind, npm, Vitest for `npm test`.
 Everything at the repo root — no subfolder.
@@ -67,7 +130,6 @@ docs/BUILD_PLAN.md and the brief PDF in docs/ are background spec,
 but timeline.md owns the phase list and its ~11h budget supersedes
 BUILD_PLAN's ~24h one.
 ```
-
 ---
 
 ## Cut order (when time slips)
@@ -91,11 +153,12 @@ failure mode an apology in the brief cannot recover.
 
 ## Phase 1 — Scaffold + schema + deploy hello-world (1.0h)
 
-- [ ] Scaffold Next.js at repo root (no subfolder)
-- [ ] Supabase project + the 7 tables — **SQL already written**: paste `supabase/migrations/0001_init.sql` into the SQL Editor, then run `supabase/verify_rls.sql` and confirm 7 rows, all `rls_enabled = true`, all `policies >= 1`
-- [ ] `.env.example` committed; real `.env.local` never staged
+- [~] Scaffold Next.js at repo root (no subfolder) — files copied in, **npm install incomplete**, uncommitted
+- [x] Supabase project + the 7 tables — run and verified Sep 2: both VERDICT rows `✓ PASS`, 7 tables RLS-on, 13 policies, `audit_logs` has no content column
+- [ ] `.env.example` committed; real `.env` never staged (`.env` confirmed gitignored + untracked)
 - [ ] Deploy to Vercel **immediately** — something must always be live
 - [ ] Anthropic API key wired, one smoke call proven
+- [ ] Vitest wired so `npm test` is green (Definition of Done gate #2)
 
 ## Phase 2 — Guest flow: 4 channels, rules config, value_event (2.0h)
 
