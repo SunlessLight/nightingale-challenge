@@ -11,21 +11,20 @@ actually remain. The SCHEDULE table in the handoff is the authority.
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~11:00, Phase 5 DONE)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~11:30, Phase 6 DONE)
 
 ## Where we are
 
-**Phases 0-5 are done.** **Next up is Phase 6 (the remaining 5 of 8 tests), then Phase 7 at
-the 12:00 hard stop.**
+**Phases 0-6 are done. All 8 required tests exist.** **Next up is Phase 7 — README,
+technical brief, demo video, email — which starts now and owns the rest of the time.**
 
-**Phase 5 came in at ~11:00 against its 11:45 box.** Phase 4 finished ~10:15 against 11:15.
-Phase 6 therefore has ~1h against its 15-min budget — spend the surplus on the tests, then
-start Phase 7 early if they land. Building still stops at 12:00 MYT.
+**Phase 6 came in at ~11:30 against its 12:00 box**, so Phase 7 starts ~30 min early.
+Phase 5 came in at ~11:00, Phase 4 at ~10:15. **Building is now finished** — Phase 7 is
+documentation and the video, not code.
 
-**Still open for Phase 6:** risk escalation (chest pain), memory mutation + provenance,
-access control, and the "are you a real doctor?" honesty test. Two of those have live prod
-evidence already (access control in Phase 3/4, honesty in the intake prompt) and need only a
-test file. **Before submission: delete or auth-gate `/api/smoke` — it is public and billable.**
+**`/api/smoke` is deleted** (commit below), so nothing public is billable any more; the
+build output no longer lists the route. Still open before submission: the Anthropic
+spend cap.
 
 Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
 Evan's logged-in browser.
@@ -220,8 +219,11 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 
 ## Before submission
 
-- **Delete or auth-gate `/api/smoke`.** It is public and, with `?run=llm`, billable.
+- ~~Delete or auth-gate `/api/smoke`~~ — **deleted in Phase 6.** `next build` no longer lists
+  the route, so there is no public billable endpoint. Recoverable from git history if the
+  env/Supabase/Anthropic wiring ever needs proving again.
 - Set a monthly spend cap in the Anthropic Console — the backstop that survives a code bug.
+  **Evan has to do this one himself; there is no API for it.**
 
 ## Prompt to start a fresh session
 
@@ -314,20 +316,22 @@ failure mode an apology in the brief cannot recover.
 
 ## Phase 5 — Send to Clinic — ✓ DONE (see Shipped, below)
 
-## Phase 6 — The 8 required tests (**11:45-12:00, 15 min**)
-
-Simplified versions are explicitly fine — they check that the cases were thought about.
+## Phase 6 — The 8 required tests — ✓ DONE (see Shipped, below)
 
 - [x] guest→patient conversion — `tests/conversion.test.ts` (Phase 3), consent gate
 - [x] value_event accuracy — `tests/valueEvents.test.ts` (Phase 2)
 - [x] escalation payload — `tests/escalation.test.ts` (Phase 5), 10 cases incl. "never
       invents a fact" and "keeps stopped medications"
-- [ ] risk escalation (chest pain case)
-- [ ] memory mutation + provenance
+- [x] risk escalation (chest pain case) — `tests/chestPain.test.ts`, the four live prod turns
+      in order: keyword-only verdict, model overruled, model-only escalation, handoff
+- [x] memory mutation + provenance — `tests/memory.test.ts` (write path, faked Supabase) on
+      top of `tests/profile.test.ts` (pure plan)
 - [x] redaction — `tests/redaction.test.ts` (Phase 2), incl. a runtime assertion on the bytes
       actually handed to the model
-- [ ] access control — the *live* proof exists (Phase 3, prod); still needs a test file
-- [ ] "are you a real doctor?" honesty test
+- [x] access control — `tests/accessControl.test.ts`: the migration is scanned as a fixture
+      (RLS + a policy on every table) **and** `authorizePatientSession()` is exercised
+- [x] "are you a real doctor?" honesty test — `tests/honesty.test.ts`, asserted on **both**
+      system prompts
 
 ## Phase 7 — README + technical brief + demo video (**12:00-13:00, hard start**)
 
@@ -357,6 +361,29 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 ---
 
 ## Shipped
+
+### ✓ Phase 6 — the 8 required tests (Sep 3, 2026, 11:15-11:30 MYT)
+
+- **All 8 exist. 207 tests green (was 136), `npm run build` green.** The four new files are
+  `chestPain.test.ts`, `memory.test.ts`, `accessControl.test.ts`, `honesty.test.ts` — 71 tests
+- **Both system prompts moved to `src/lib/prompts.ts`.** They could not stay in the route
+  files: a Next.js App Router route may only export a fixed set of names, so
+  `export const SYSTEM_PROMPT` passes Vitest and **fails `npm run build`**. Assembled with
+  `sed` from the existing lines, so the prompt text is byte-identical and live behaviour
+  cannot have drifted
+- **The mocked suites were mutation-tested rather than trusted.** Adding
+  `provenance_pointer` to the status-change UPDATE, and deleting the "I am not a doctor"
+  line from the guest prompt, each turned the relevant tests red; both were reverted and
+  `git diff` confirmed byte-identical. A green mock proves nothing on its own
+- **Access control is tested at both enforcement points**, because each is invisible from the
+  other: the migration is read as a fixture (every `create table` has RLS **and** a policy;
+  `audit_logs` has no content-shaped column), and `authorizePatientSession()` — the check the
+  admin key removes RLS from — is exercised for 400/401/403/404 incl. 404-not-403 for
+  someone else's record
+- **`chestPain.test.ts` walks the real prod conversation**, typos included, and pins the turn
+  the regex *cannot* catch ("i'm not having the pain right now") as `keywordRisk() === null`,
+  escalated by the model alone. That asymmetry is the argument for having two layers
+- **`/api/smoke` deleted** — the build output no longer lists the route
 
 ### ✓ Phase 5 — Send to Clinic (Sep 3, 2026, 10:40-11:00 MYT)
 

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { askClaude } from "@/lib/anthropic";
-import { CLINIC_ID, CLINIC_NAME } from "@/lib/clinic";
+import { CLINIC_ID } from "@/lib/clinic";
 import { logFunnelEvent } from "@/lib/funnel";
 import {
   insertLeadMessage,
   loadLeadMessages,
   loadLeadSession,
 } from "@/lib/leadSessions";
+import { GUEST_SYSTEM_PROMPT } from "@/lib/prompts";
 import { redact, toRedactedTurns } from "@/lib/redaction";
 import { decideRisk } from "@/lib/risk";
 
@@ -32,21 +33,6 @@ import { decideRisk } from "@/lib/risk";
 export const maxDuration = 60;
 
 const MAX_MESSAGE_CHARS = 2000;
-
-const SYSTEM_PROMPT = `You are the AI assistant for ${CLINIC_NAME}, talking to someone who has NOT signed up and has given no personal details. Your job is to be genuinely, immediately useful before the clinic asks them for anything.
-
-HARD RULES — these are not style preferences:
-- You are an AI, not a doctor. If asked whether you are a real doctor, a nurse, or a human, say plainly that you are not and that a real clinician can pick this up.
-- NEVER diagnose. Do not say "you have X" or "this is X". Describe possibilities and what usually matters, and say what would make it worth seeing someone.
-- NEVER recommend starting, stopping or changing a medication or a dose.
-- If something is ambiguous, say honestly that you are not sure. Never offer false reassurance to make someone feel better.
-- If anything they describe could be an emergency — severe chest pain, trouble breathing, heavy bleeding, thoughts of harming themselves — say so directly and tell them to stop and call 999 now.
-
-ABOUT THE TEXT YOU RECEIVE:
-Identifying details are stripped before anything reaches you, so you will see tokens like [REDACTED_NAME], [REDACTED_PHONE] or [REDACTED_ID]. That is working as intended. Never ask the person to repeat them, and never ask for a full name, IC number, phone number or address.
-
-STYLE:
-Warm, plain, and short — two to four sentences. Ask at most one follow-up question. Give them one concrete useful thing per reply (what to watch for, what usually helps, when it is worth being seen) rather than only asking questions back.`;
 
 export async function POST(request: Request) {
   let body: { leadSessionId?: string; message?: string };
@@ -111,7 +97,7 @@ export async function POST(request: Request) {
   let inputTokens = 0;
   let outputTokens = 0;
   try {
-    const result = await askClaude({ system: SYSTEM_PROMPT, turns });
+    const result = await askClaude({ system: GUEST_SYSTEM_PROMPT, turns });
     reply = result.text;
     inputTokens = result.inputTokens;
     outputTokens = result.outputTokens;

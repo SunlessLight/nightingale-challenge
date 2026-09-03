@@ -157,6 +157,13 @@ These are not preferences. A change that violates one of these is wrong even if 
   browser need it, and `escalations.ts` imports `supabaseAdmin` — importing it from a client
   component would pull server-only code into the browser bundle. Constants a browser needs
   belong in a module with no server imports.
+- **Both system prompts live in `src/lib/prompts.ts`, never inside a route file.** A Next.js
+  App Router route module may only export a fixed set of names (`GET`, `POST`, `dynamic`,
+  `maxDuration`, …), so `export const SYSTEM_PROMPT` from `route.ts` type-checks green under
+  Vitest and then **fails `npm run build`**. The prompts carry safety behaviour — the "I am
+  not a doctor" disclosure, no-diagnosis, no-medication-changes, honest uncertainty, the 999
+  instruction — and `tests/honesty.test.ts` asserts on the exact strings both live routes
+  send. Do not inline them back into the routes; that silently un-tests the disclosures.
 - **`npm test` passing does not mean the types are sound.** Vitest transpiles and strips types
   without checking them, so a function can return an object missing a required field and still
   go green. `npm run build` is the type gate — run both.
