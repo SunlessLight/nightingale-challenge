@@ -6,11 +6,12 @@
 > 2. Anything **removed or rejected keeps a one-liner**, so it isn't re-added by a later session.
 
 **Deadline:** Thurs Sep 3, 2026, 1:00 PM SGT/MYT.
-**Budget below is ~11h and has zero slack** — it replaces the BUILD_PLAN's ~24h estimate.
+**The per-phase hours below were rewritten on Sep 3 at 09:00** to fit the 4 hours that
+actually remain. The SCHEDULE table in the handoff is the authority.
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~00:20, start of Phase 3)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~09:05, start of Phase 3)
 
 ## Where we are
 
@@ -21,10 +22,60 @@ one rules table, redaction before the LLM, and a real value_event count. Next up
 Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
 Evan's logged-in browser.
 
-## Nothing is blocking
+## ⏱ SCHEDULE — the budget no longer fits. Read this before writing code.
 
-The Phase 1 blocker is cleared: Vercel now holds the plain Anthropic key, and
-`/api/smoke?run=llm` returns `"anthropic":{"called":true,"ok":true,"model":"claude-opus-5"}`.
+Measured at 08:58 MYT on Sep 3: **4h 1m to the deadline**, against **8h** of remaining
+budgeted work (Phases 3-7). Phase 2 came in at 35 min against 2.0h, but the overnight gap ate
+the buffer. Roughly half the remaining scope has to go.
+
+**Evan chose this plan (Sep 3, ~09:00). Do not re-litigate it:**
+
+| Time (MYT) | Phase | Trimmed to |
+|---|---|---|
+| 09:00-09:45 | 3 — auth + consent + conversion | Minimum viable. Consent checkbox + guest→patient carry-over. |
+| 09:45-11:15 | **4 — risk gating + memory** | **PROTECTED. Do not cut.** Highest-graded section. |
+| 11:15-11:45 | 5 — Send to Clinic | Warm-lead view dropped (first on the cut list) |
+| 11:45-12:00 | 6 — the 8 required tests | Simplified; **2 of 8** already written in Phase 2 |
+| **12:00** | **HARD STOP on building** | |
+| 12:00-13:00 | 7 — README, technical brief, video, email | Non-negotiable. An unsubmitted project scores zero. |
+
+If a phase overruns, take the time out of Phase 5 or 6 — never Phase 4, never Phase 7.
+
+## ⚠️ DO THIS FIRST in Phase 3 — the Supabase auth trap
+
+**Do NOT use `supabase.auth.signUp()` from the browser.** Measured on Sep 3 ~09:00 against
+the real project:
+
+- `probe@example.com` → `400 Email address is invalid`. Supabase blocklists `example.com`,
+  so synthetic test emails need a domain that survives its validator.
+- `probe@nightingale-demo.co` → also `400 ... is invalid`.
+- Two further attempts → `429 email rate limit exceeded`.
+
+*Measured:* the 400s and the 429s above, and that **0 auth users** exist in the project, so
+none of the probes created anything.
+*Inferred, not measured:* the 429 says "**email** rate limit", which implies Supabase tried to
+send a confirmation mail — i.e. **Confirm email is ON**, the default. If so, `signUp()` returns
+`session: null` and the new patient is never logged in, which breaks conversion and the demo.
+
+**Recommended fix — no dashboard action, no email, no rate limit:**
+
+```ts
+// server-side only, in a route handler
+const { data } = await supabaseAdmin().auth.admin.createUser({
+  email, password, email_confirm: true,   // marks it confirmed WITHOUT sending mail
+});
+// then sign the browser in normally:
+await supabasePublic().auth.signInWithPassword({ email, password });
+```
+
+`admin.createUser` sends no email, so it is not rate limited, and it keeps the whole flow
+inside code rather than depending on a toggle Evan has to remember. The alternative — Supabase
+dashboard → Authentication → Sign In / Providers → Email → **Confirm email OFF** — also works
+but costs a context switch and leaves a setting a future redeploy could surprise you with.
+
+**Verify the choice before building on it:** create one synthetic patient, confirm
+`auth.uid()` is non-null, and confirm the RLS policy `patient_sessions_own_read` actually
+returns that row for the logged-in user and nothing for a stranger. RLS failures are silent.
 
 ## What Phase 3 must not break
 
@@ -38,12 +89,11 @@ The Phase 1 blocker is cleared: Vercel now holds the plain Anthropic key, and
 - **`resolveOpening()` already has an `identity_level: "identified"` row** for returning
   patients. Phase 3 raises `identity_level` — the greeting is already written and tested.
 
-## Time budget — honest state
+## Time budget — superseded
 
-Deadline is **Thurs Sep 3, 1:00 PM SGT**. Phases 2-7 are budgeted **10.0h** and Phase 1 ran
-well over its 1.0h estimate (almost entirely on Vercel configuration, not code). There is no
-slack left for another multi-hour detour. If time slips, cut in the order at the top of this
-file — and **never cut from Phase 4**.
+The original 10.0h envelope for Phases 2-7 is dead. See the SCHEDULE table above, which is
+the live plan. Cut order when something slips is still the list at the top of this file, and
+**never cut from Phase 4**.
 
 ## Environment and accounts
 
@@ -91,6 +141,18 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 - **Vitest does not read `tsconfig.json` path aliases.** `@/*` is declared a second time in
   `vitest.config.mts`. A new alias means editing both files.
 - **`vitest.config.mts`, not `.ts`** — as `.ts` it loads as CommonJS and Vite warns every run.
+- **Do not write `.ts`/`.tsx` files with a bash heredoc.** Measured in Phase 2: an escaped
+  backslash-b inside a template literal arrived in the file as a *single* backslash-b, which
+  JavaScript reads as the backspace escape rather than a regex word boundary, so the regex
+  matched nothing and threw no error. (This bullet lost the same character twice while being
+  written, which is the point.) A second attempt with two heredocs of JSX failed to parse at
+  all and wrote no files. Use the Write tool for code; heredocs are fine for prose.
+- **Supabase's JS client types the `select()` string at compile time.** A runtime-concatenated
+  column list defeats that and TS infers `GenericStringError`. Either inline the string literal
+  or cast `as unknown as Row`. See `LEAD_COLUMNS` in `src/lib/leadSessions.ts`.
+- **Something has been squatting on port 3000** (a stale `next dev`, serving 500s). Phase 2
+  verification ran on `npx next start -p 3001` to avoid killing Evan's process. If `npm run
+  dev` behaves oddly, check `netstat -ano | grep :3000` first.
 
 **Supabase**
 
@@ -108,6 +170,10 @@ Keys live *outside* the repo, so a fresh session cannot see them:
   granting it via SQL the account **must sign out and back in** or `is_staff()` stays false.
 - **`git check-ignore -v .env`** after anything touches `.gitignore`. A leaked key cannot be
   un-leaked from git history.
+- **`auth.signUp()` is a trap** — blocklisted domains, a low email rate limit, and (inferred)
+  email confirmation ON. See "DO THIS FIRST in Phase 3" above before writing any auth code.
+- **jsonb filtering works.** `.contains("metadata", { clinic_id })` maps to the `@>` operator
+  and was exercised in production in Phase 2. The planned JS-side fallback was not needed.
 
 ## Open decisions awaiting Evan
 
@@ -131,17 +197,27 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 ## Prompt to start a fresh session
 
 ```
-Read timeline.md, including the HANDOFF section, and continue from where it
-says we are. We're starting Phase 3 (auth + consent + LeadSession to
-PatientSession conversion).
+Read these, in this order, then execute:
+  1. CLAUDE.md      (safety invariants - non-negotiable)
+  2. timeline.md    (this file: the HANDOFF, the SCHEDULE table, and the
+                     "DO THIS FIRST in Phase 3" section)
 
-Before you write anything: tell me your plan, and confirm you've loaded
-CLAUDE.md by quoting safety invariant #2 back to me.
+We are executing Phase 3: auth + consent + LeadSession to PatientSession
+conversion. Do not spawn subagents.
+
+READ THE SCHEDULE TABLE FIRST. The original budget is dead. Phase 3 is boxed
+at 45 minutes and building stops entirely at 12:00 MYT so the README, brief,
+video and email get their hour. I already chose that plan - do not re-open it.
+
+Do not use supabase.auth.signUp() from the browser. Read the "DO THIS FIRST"
+section for what I measured and the recommended admin.createUser path.
 
 Already done - do not redo:
-- Phase 2 shipped. Four channels, one rules table, redaction enforced by a
-  branded `Redacted` type, real value_event count. 37 tests green.
-- Production LLM calls work; /api/smoke?run=llm is green anonymously.
+- Phases 0, 1, 2 shipped and verified anonymously in production. Four
+  channels, one rules table, redaction enforced by a branded `Redacted` type,
+  real value_event count. 37 tests green.
+- Anonymous curl of the deployed URL returns 200 on /, 302 on all four
+  /start channels, and 200 from /api/guest/chat with a real reply.
 
 Stack decisions already made - don't re-ask:
 Next.js App Router + TypeScript + Tailwind, npm, Vitest, everything at the
@@ -157,14 +233,18 @@ How I want you to work:
   inferred, and say which is which.
 - Verify anything deployed as an anonymous stranger (curl or incognito),
   never from my logged-in browser.
+- Tell me plainly when I need to do something myself, and when I don't. I do
+  NOT want to be sent to a dashboard unless it is genuinely unavoidable.
 
-The Phase 3 requirement that is easy to get wrong:
+The Phase 3 requirements that are graded and easy to get wrong:
 - Conversion must re-ask NOTHING. The guest's messages and their provenance
   survive the guest->patient transition intact.
+- Access control is graded. RLS is already written and verified at the SQL
+  level; prove it end to end with a logged-in user AND a stranger.
 
-Time: deadline Thurs Sep 3, 1:00 PM SGT. Phases 3-7 are budgeted ~8h with no
-slack. If we slip, cut in the order at the top of timeline.md - and never cut
-from Phase 4.
+When Phase 3 is done: npm test, npm run build, click it through, verify
+anonymously against the deployed URL, commit, update timeline.md, then move
+straight to Phase 4 - which is protected and must not be cut.
 ```
 ---
 
@@ -187,13 +267,16 @@ failure mode an apology in the brief cannot recover.
 
 ---
 
-## Phase 3 — Auth + consent + conversion (1.5h)
+## Phase 3 — Auth + consent + conversion (**45 min**, was 1.5h)
 
-- [ ] Supabase auth signup/login
+- [ ] Auth via `supabaseAdmin().auth.admin.createUser({ email_confirm: true })` then
+      `signInWithPassword` — **not** browser `signUp()`. See "DO THIS FIRST" in the handoff.
 - [ ] Consent checkbox → `consent_at` + `consent_clinic_name`
 - [ ] LeadSession → PatientSession conversion preserving full attribution, **re-asking nothing**
+- [ ] Prove access control end to end: the logged-in patient reads their own row, a stranger
+      reads nothing. RLS failures are silent, so an empty result is not proof of anything.
 
-## Phase 4 — Intake + risk gating + memory (3.0h) — PROTECT THIS BUDGET
+## Phase 4 — Intake + risk gating + memory (**09:45-11:15, 1.5h**) — PROTECT THIS BUDGET
 
 - [ ] **Emergency-phrase tests written first** (4 phrases + close variants)
 - [ ] Hardcoded keyword safety net — runs independently; LLM may escalate, never de-escalate
@@ -202,32 +285,36 @@ failure mode an apology in the brief cannot recover.
 - [ ] Living Memory: chief complaint, symptoms + timeline, medications, allergies
 - [ ] Each profile item carries `value` / `status` / `provenance_pointer` / `updated_at`; corrections change **status**, never delete
 
-## Phase 5 — Send to Clinic (1.0h)
+## Phase 5 — Send to Clinic (**11:15-11:45, 30 min**)
 
 - [ ] On Med/High risk: one clear button
 - [ ] Escalation persists triggering message + 1-5 bullet triage summary + profile snapshot + provenance + acquisition context
 - [ ] Confirmation + "response in 12-18 hours"; chat continues after sending
 - [ ] Warm-lead view reduced to a **minimal read-only list** (first thing to cut)
 
-## Phase 6 — The 8 required tests (1.0h)
+## Phase 6 — The 8 required tests (**11:45-12:00, 15 min**)
 
 Simplified versions are explicitly fine — they check that the cases were thought about.
 
 - [ ] guest→patient conversion
-- [ ] value_event accuracy
+- [x] value_event accuracy — `tests/valueEvents.test.ts` (Phase 2)
 - [ ] escalation payload
 - [ ] risk escalation (chest pain case)
 - [ ] memory mutation + provenance
-- [ ] redaction
+- [x] redaction — `tests/redaction.test.ts` (Phase 2), incl. a runtime assertion on the bytes
+      actually handed to the model
 - [ ] access control
 - [ ] "are you a real doctor?" honesty test
 
-## Phase 7 — README + technical brief + demo video (1.5h) — start at hour ~9, not hour ~11
+## Phase 7 — README + technical brief + demo video (**12:00-13:00, hard start**)
 
 - [ ] README: setup/run/test steps, **where redaction happens**, **how RBAC is enforced**
 - [ ] `docs/TECHNICAL_BRIEF.md`: architecture, data schema, channel ethics green/yellow/red table, assumptions, trade-offs/cuts, voice-AI future notes
 - [ ] ATTRIBUTION.txt final pass (append as each dep is added — don't reconstruct at 3am)
-- [ ] 3-minute demo video: Scenario A then Scenario B
+- [ ] 3-minute demo video: Scenario A then Scenario B. Record from the **deployed URL in an
+      incognito window** — nothing to configure in Vercel, it deploys on push. The whole
+      remaining window is inside clinic hours (08:00-21:00 MYT), so the channel-specific
+      greetings show automatically; the after-hours variant is not a risk today.
 - [ ] Email to irakumar@ntngale.com, cc yunxint@sunway.edu.my, subject "Nightingale 48HR Build — Evan Yeoh"
 
 ---
@@ -269,7 +356,8 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 - Untrusted `?topic=`/`?campaign=` params are sanitised at the boundary because the topic is
   spoken in the assistant's voice and replayed to the model — a **prompt-injection** vector,
   not just an XSS one
-- 37 tests green (was 6); `npm run build` green. Verified **anonymously by curl against the
+- 37 tests green (was 6) across 4 suites; two of Phase 6's eight required tests (redaction,
+  value_event accuracy) are pre-paid. `npm run build` green. Verified **anonymously by curl against the
   deployed URL** — all four channels 302, guest page 200, chat 200, and the production row
   read back out of Supabase shows raw PII in `content` and masked text in `redacted_content`.
   Latency ~5.8–6.7s in production (~5.1–5.8s local); **~$0.0085/message** (703 in / 199 out
