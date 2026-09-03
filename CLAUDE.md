@@ -69,6 +69,23 @@ These are not preferences. A change that violates one of these is wrong even if 
   Time buckets use `Intl` in **Asia/Kuala_Lumpur** — Vercel runs UTC, 8h behind the clinic.
 - **Any count shown to a patient is a real DB count.** `value_event` counts **distinct
   `session_id`**, because the copy says "N *people*". Zero renders nothing, never "0".
+- **Guest→patient conversion RE-POINTS messages, it never copies them.**
+  `carryMessages()` in `src/lib/patientSessions.ts` UPDATEs `session_id` +
+  `session_type='patient'`, so every `messages.id` and `created_at` survives and
+  `profile_items.provenance_pointer` still resolves to the *original* guest utterance. The
+  `session_type` flip is not cosmetic: `messages_own_read` is
+  `session_type='patient' AND owns_patient_session(...)`, so lead rows are unreadable by the
+  patient who wrote them. **Never "fix" this into an INSERT** — new ids orphan every pointer.
+- **Consent is enforced server-side and must be the literal `true`.** `validateConversion()`
+  rejects `"true"`, `1` and any other truthy value. A disabled submit button is a courtesy;
+  this is the control. Care consent and marketing consent are two separate timestamps.
+- **`requireEnv()` cannot be used in browser code.** It indexes `process.env` *dynamically*;
+  Next.js inlines only *literal* `process.env.NEXT_PUBLIC_X` member expressions into the
+  client bundle. `supabaseBrowser()`/`supabaseStranger()` read the two literals directly —
+  do not tidy them back into `requireEnv()` or they throw in production only.
+- **`/patient/[id]` never server-renders patient data with the admin key.** Every read goes
+  through the patient's own RLS-bound client, so access control is a Postgres policy rather
+  than an unguessable URL. The page runs the signed-out query live as a negative control.
 
 ---
 

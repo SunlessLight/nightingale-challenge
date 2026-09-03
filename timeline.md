@@ -11,13 +11,15 @@ actually remain. The SCHEDULE table in the handoff is the authority.
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~09:05, start of Phase 3)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~09:30, start of Phase 4)
 
 ## Where we are
 
-**Phases 0, 1 and 2 are done.** The guest flow works end to end in production: four channels,
-one rules table, redaction before the LLM, and a real value_event count. Next up is Phase 3
-(auth + consent + LeadSession → PatientSession conversion).
+**Phases 0, 1, 2 and 3 are done.** The guest flow AND the guest→patient conversion work end to
+end in production. Next up is Phase 4 (intake + risk gating + memory) — the PROTECTED budget.
+
+**Phase 3 came in at ~18 minutes against its 45-minute box**, which buys back ~27 minutes.
+Spend it on Phase 4, not on polish.
 
 Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
 Evan's logged-in browser.
@@ -41,7 +43,7 @@ the buffer. Roughly half the remaining scope has to go.
 
 If a phase overruns, take the time out of Phase 5 or 6 — never Phase 4, never Phase 7.
 
-## ⚠️ DO THIS FIRST in Phase 3 — the Supabase auth trap
+## ⚠️ RESOLVED in Phase 3 — the Supabase auth trap (kept for the brief)
 
 **Do NOT use `supabase.auth.signUp()` from the browser.** Measured on Sep 3 ~09:00 against
 the real project:
@@ -57,7 +59,7 @@ none of the probes created anything.
 send a confirmation mail — i.e. **Confirm email is ON**, the default. If so, `signUp()` returns
 `session: null` and the new patient is never logged in, which breaks conversion and the demo.
 
-**Recommended fix — no dashboard action, no email, no rate limit:**
+**The fix that shipped — no dashboard action, no email, no rate limit. Worked first try:**
 
 ```ts
 // server-side only, in a route handler
@@ -267,14 +269,7 @@ failure mode an apology in the brief cannot recover.
 
 ---
 
-## Phase 3 — Auth + consent + conversion (**45 min**, was 1.5h)
-
-- [ ] Auth via `supabaseAdmin().auth.admin.createUser({ email_confirm: true })` then
-      `signInWithPassword` — **not** browser `signUp()`. See "DO THIS FIRST" in the handoff.
-- [ ] Consent checkbox → `consent_at` + `consent_clinic_name`
-- [ ] LeadSession → PatientSession conversion preserving full attribution, **re-asking nothing**
-- [ ] Prove access control end to end: the logged-in patient reads their own row, a stranger
-      reads nothing. RLS failures are silent, so an empty result is not proof of anything.
+## Phase 3 — Auth + consent + conversion — ✓ DONE (see Shipped, below)
 
 ## Phase 4 — Intake + risk gating + memory (**09:45-11:15, 1.5h**) — PROTECT THIS BUDGET
 
@@ -296,14 +291,14 @@ failure mode an apology in the brief cannot recover.
 
 Simplified versions are explicitly fine — they check that the cases were thought about.
 
-- [ ] guest→patient conversion
+- [x] guest→patient conversion — `tests/conversion.test.ts` (Phase 3), consent gate
 - [x] value_event accuracy — `tests/valueEvents.test.ts` (Phase 2)
 - [ ] escalation payload
 - [ ] risk escalation (chest pain case)
 - [ ] memory mutation + provenance
 - [x] redaction — `tests/redaction.test.ts` (Phase 2), incl. a runtime assertion on the bytes
       actually handed to the model
-- [ ] access control
+- [ ] access control — the *live* proof exists (Phase 3, prod); still needs a test file
 - [ ] "are you a real doctor?" honesty test
 
 ## Phase 7 — README + technical brief + demo video (**12:00-13:00, hard start**)
@@ -334,6 +329,33 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 ---
 
 ## Shipped
+
+### ✓ Phase 3 — Auth + consent + guest→patient conversion (Sep 3, 2026, 09:12-09:30 MYT)
+
+- **Conversion re-points messages, it does not copy them.** `carryMessages()` UPDATEs
+  `session_id` + `session_type='patient'`, so `messages.id` and `created_at` are byte-identical
+  after conversion and `profile_items.provenance_pointer` still resolves to the ORIGINAL guest
+  utterance. Verified in prod: message `8328bfc4…` kept its id and its `created_at` of
+  01:18:16, twelve seconds *before* the 01:18:28 consent
+- **The `session_type` flip is load-bearing, not cosmetic.** `messages_own_read` is
+  `session_type='patient' AND owns_patient_session(...)`. Left as lead rows (what the old
+  handoff suggested) the patient cannot read their own history through the RLS-bound client
+- **Auth via `admin.createUser({ email_confirm: true })` on the server** — worked first try,
+  no email sent, no rate limit, no dashboard toggle. Browser `signUp()` was never used
+- **Consent is server-enforced and must be the literal `true`.** `"true"`, `1` and `{}` are all
+  rejected with 422 — verified against production, not just in tests. Marketing consent is a
+  separate optional timestamp; both were stored independently in the prod row
+- **`/patient/[id]` reads only through the patient's own anon+JWT client.** The admin key never
+  touches that page, and the page runs the signed-out query live as a visible negative control
+- **Access control proven four ways against the real DB** (local *and* prod): the patient reads
+  their own row + 3 carried messages; a signed-out stranger reads 0 from `messages`,
+  `patient_sessions` and `lead_sessions`; a *second logged-in patient* reads 0 of patient #1
+  and 1 of their own. 50 tests green (was 37); `npm run build` green
+- **New trap found:** `requireEnv()` is unusable in browser code — it indexes `process.env`
+  dynamically and Next.js inlines only *literal* `process.env.NEXT_PUBLIC_X`. Verified the
+  public URL IS in the prod client bundle and neither secret is
+- Additive: `funnel_events` gained a `consent_granted` event type, logged on the PATIENT
+  session with the originating channel, so a signup joins back to the ad that earned it
 
 ### ✓ Phase 2 — Guest flow: 4 channels, rules config, value_event (Sep 3, 2026)
 
