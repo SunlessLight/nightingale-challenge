@@ -105,6 +105,32 @@ These are not preferences. A change that violates one of these is wrong even if 
 - **`profile_items.patient_session_id` is a NOT NULL FK to `patient_sessions`** — a guest
   cannot have profile items. Memory extraction therefore belongs to the patient intake chat,
   not the guest chat. This is a schema constraint, not a preference.
+- **`src/lib/messages.ts` is the ONE write path for `messages`**, shared by both chat routes.
+  The four risk columns are mapped in a single private `riskColumns()` helper. Two copies of
+  that mapping is how one route quietly stops writing a column. `insertLeadMessage()` is a
+  thin wrapper — do not re-inline a direct `.from("messages").insert()` anywhere else.
+- **Risk is decided on the RAW message, never the redacted one.** Redaction rewrites
+  sentences, and the keyword layer must see exactly what the person typed.
+- **Risk columns belong to `role='user'` rows only.** Risk is an assessment of what the
+  *patient* said; storing it on the assistant's reply double-counts every escalation.
+- **The patient route stores the keyword-only verdict BEFORE calling the model, then upgrades
+  it with `max(keyword, llm)` afterwards.** A safety net that only exists after a successful
+  network call is not a safety net. Both chat routes therefore also return the keyword verdict
+  on a 502, so the emergency banner still renders when the model is unreachable. Never reorder
+  this so the first write happens after the LLM call.
+- **A route that uses the admin client has NO RLS, so it must authorise explicitly.**
+  `/api/patient/chat` calls `authorizePatientSession()`, which verifies the bearer token
+  against `patient_sessions.auth_user_id` — the same predicate `owns_patient_session()` uses,
+  restated in the one place the policy cannot reach. A uuid in the request body is not access
+  control. It returns 404 (not 403) for someone else's record, so the API does not confirm
+  which ids exist.
+- **Living-memory matching is a SOFT JOIN on model-authored text.** `matchKey()` compares the
+  fact's `value`, so a value the model rewrites by one clause becomes a *new* row instead of a
+  status change — measured in Phase 4, where "Advil …" came back as "Advil … — stopped last
+  week" and the profile ended up asserting both `active` and `stopped` for one drug. The
+  intake prompt therefore carries an explicit contract: **copy an existing fact's `value`
+  character for character and change only `status`.** Do not soften or delete that paragraph;
+  it is load-bearing, and it is the only thing preventing contradictory duplicates.
 - **`npm test` passing does not mean the types are sound.** Vitest transpiles and strips types
   without checking them, so a function can return an object missing a required field and still
   go green. `npm run build` is the type gate — run both.

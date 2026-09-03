@@ -11,78 +11,31 @@ actually remain. The SCHEDULE table in the handoff is the authority.
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~09:52, MID-Phase 4)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~10:15, Phase 4 DONE)
 
 ## Where we are
 
-**Phases 0-3 are done and live. Phase 4 is HALF DONE — its pure logic is written and tested,
-its routes and UI are not.** Read "Phase 4 — exact state" below before writing a line of code;
-the next session's job is wiring, not designing.
+**Phases 0-4 are done.** Phase 4 — the highest-graded section — is fully wired and verified
+end to end against the real API and the real database. **Next up is Phase 5 (Send to Clinic),
+then Phase 6 (tests), then Phase 7 at the 12:00 hard stop.**
 
-**Phase 3 came in at ~18 minutes against its 45-minute box.** Phase 4's libraries took ~20
-more. Building still stops at 12:00 MYT.
+**Phase 4 came in at ~10:15 against its 11:15 box** (libraries ~20 min the night before,
+wiring ~45 min). That leaves Phase 5 and 6 with more room than the schedule assumed. Building
+still stops at 12:00 MYT.
 
 Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
 Evan's logged-in browser.
 
-## 🔧 Phase 4 — exact state (STOP: read before coding)
+## ✅ Phase 4 — exact state: DONE (was the STOP block; kept only as the record)
 
-Committed in `a82ef3f`. **126 tests green, `npm run build` green.** The libraries below are
-done, tested, and need no design work. What is missing is plumbing.
+Wired and verified in `c264fd8`. **126 tests green, `npm run build` green.** The libraries
+(`risk.ts`, `profile.ts`) were already done; this session added the plumbing and measured it.
 
-### DONE — do not rewrite these
-
-| File | What it gives you |
-|---|---|
-| `src/lib/risk.ts` | `keywordRisk(text)` -> `{level, matched, reason}` or null, and `decideRisk(text, llmRisk)` -> `{level, reason, confidence, provenance}`. One rules table, highest-severity-wins. |
-| `tests/risk.test.ts` | 66 tests: the four phrases, 25 close variants, 8 ambiguous cases, and the full escalate/de-escalate matrix. |
-| `src/lib/profile.ts` | `planProfileMutations()` (pure), `applyProfileMutations()` (DB), `loadProfile()`, `profileAsContext()`, `CATEGORY_LABELS`. |
-| `tests/profile.test.ts` | 10 tests. Corrections change status, never delete. |
-| `src/lib/anthropic.ts` | `askClaudeIntake({system, turns})` -> `{reply, risk, facts, inputTokens, outputTokens}` in ONE forced-tool call. |
-
-### NOT DONE — this is the remaining Phase 4 work
-
-- [ ] **Wire risk into the guest chat.** `src/app/api/guest/chat/route.ts` still stores no
-      `risk_level`. At minimum run `decideRisk(rawMessage, null)` and write `risk_level`,
-      `risk_reason`, `confidence`, `risk_provenance` onto the user message.
-      `insertLeadMessage()` in `src/lib/leadSessions.ts` does not accept those columns yet —
-      widen it.
-- [ ] **Build the patient intake chat**: `POST /api/patient/chat` + a `PatientChat` client
-      component on `/patient/[id]`. This is where `askClaudeIntake()` and
-      `applyProfileMutations()` belong, because `profile_items.patient_session_id` is a NOT
-      NULL FK to `patient_sessions` — **a guest cannot have profile items at all.** That
-      constraint is the reason memory extraction lives on the patient side.
-- [ ] **Render the live Patient Profile** on `/patient/[id]`, grouped by `CATEGORY_LABELS`,
-      showing `status` and the `provenance_pointer` message behind each item.
-- [ ] **Non-diagnostic system prompt for the patient chat.** Start from `SYSTEM_PROMPT` in the
-      guest chat route and append `profileAsContext(items)` so nothing is re-asked.
-- [ ] Emergency disclaimer under the patient chat box (already correct in `GuestChat.tsx` —
-      copy it; invariant #8 covers every surface that can take a message).
-
-### ⚠️ The one thing that is NOT verified
-
-**`askClaudeIntake()` has never been called against the real API.** It compiles and
-type-checks; that is all. It combines a FORCED tool (`tool_choice: {type:"tool"}`) with
-`output_config: {effort:"medium"}`, and that pairing is unexercised in this repo. **Make one
-real call before building UI on top of it.** If the forced tool 400s, the fallback already
-exists: the function returns `risk: null` and the keyword layer stands alone, which is
-precisely what that layer is for.
-
-### Traps found while writing this
-
-- **Vitest does not type-check.** `decideRisk()` was returning an object missing its `reason`
-  field while still annotated as `RiskDecision`. Vitest transpiles and strips types, so it ran
-  happily; only an assertion caught it. **`npm test` passing is not evidence that the types are
-  sound — run `npm run build`.**
-- **`zod` is in `node_modules` but NOT in `package.json`** — a transitive dependency. The
-  Anthropic SDK's `zodOutputFormat` structured-output helper is therefore off-limits unless zod
-  is added as a real dependency, because Vercel runs `npm ci`. Phase 4 uses a raw JSON-schema
-  forced tool instead, which needs nothing new.
-- **`output_config: {effort: "..."}` is nested, not top-level**, and `budget_tokens` is a 400
-  on Opus 5. Guest chat uses `effort: "low"`; `askClaudeIntake` uses `"medium"` because it is
-  also making the risk judgement.
-- **A bash heredoc broke again**, this time on an apostrophe inside a quoted Python string.
-  The existing rule stands and now covers scripts too: write files with the Write tool.
+**`askClaudeIntake()` is now proven against the real API** — the one thing the previous
+handoff flagged as unverified. Forced `tool_choice` + `output_config: {effort:"medium"}` on
+`claude-opus-5` does **not** 400. Measured: 4.6–5.3s, ~1190 in / ~375 out tokens,
+**$0.0152 per intake turn** (~1.8× a guest message; output tokens are 60% of the bill at
+5× the input price). Doing reply + risk + extraction as three calls would roughly triple it.
 
 ## ⏱ SCHEDULE — the budget no longer fits. Read this before writing code.
 
@@ -239,6 +192,14 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 
 ## Open decisions awaiting Evan
 
+- **Living-memory corrections match on the model-authored value STRING** — measured failure in
+  Phase 4: the model wrote "Advil ... — stopped last week" as the *value*, `matchKey()` missed,
+  and the correction inserted a duplicate rather than changing status. Hardened with an explicit
+  value-reuse instruction in the intake prompt and re-verified working, but a prompt is
+  probabilistic. **The structural fix is to send the model each item's `id` in the profile
+  context and have it echo the id back**, turning a fuzzy string join into an exact key. Not done
+  — it touches `profile.ts`'s tested contract and the schedule did not have room. Evan's call.
+
 - **Supabase GitHub integration** — recommended **disconnected**; it would auto-run migrations
   on push and collide with the manual SQL-Editor path. Still unconfirmed.
 - **Two additive columns** beyond the locked CLAUDE.md schema, both so RLS policies are
@@ -249,7 +210,9 @@ Keys live *outside* the repo, so a fresh session cannot see them:
   is the evidence for safety invariant #2. Live.
 - **Model: `claude-opus-5`** — settled, id isolated in `src/lib/models.ts`. Measured in Phase 2
   at **~5.1-5.8s** and **~$0.0085 per guest message** (703 input / 199 output tokens at
-  $5/$25 per 1M). Fine for a typing indicator; revisit only if Phase 4 pushes it past ~8s.
+  $5/$25 per 1M). Phase 4 measured the intake call at 4.6-5.3s cold and **7.6s** on a turn
+  carrying 3 messages of history plus a profile — the ceiling to watch, since context grows
+  every turn. Still fine behind a typing indicator; `maxDuration = 60` on both chat routes.
 
 ## Before submission
 
@@ -261,30 +224,39 @@ Keys live *outside* the repo, so a fresh session cannot see them:
 ```
 Read these, in this order, then execute:
   1. CLAUDE.md      (safety invariants - non-negotiable)
-  2. timeline.md    (this file: the HANDOFF, the SCHEDULE table, and the
-                     "DO THIS FIRST in Phase 3" section)
+  2. timeline.md    (this file: the HANDOFF and the SCHEDULE table)
 
-We are finishing Phase 4: intake + risk gating + memory. Do not spawn
+We are on Phase 5 (Send to Clinic), then Phase 6 (the 8 tests). Do not spawn
 subagents.
 
-READ "Phase 4 - exact state" IN THE HANDOFF FIRST. Phase 4 is HALF DONE.
-src/lib/risk.ts and src/lib/profile.ts are written, tested and correct - do
-not redesign them. The remaining work is wiring: the patient intake chat
-route, the profile panel, and writing the risk columns onto messages.
-
-Before building any UI on askClaudeIntake(), make ONE real API call with it.
-It has never been executed - it pairs a forced tool with output_config effort
-and that combination is unproven in this repo.
+Phase 4 is DONE and verified - do not redo or redesign it. risk.ts,
+profile.ts, messages.ts, /api/patient/chat, PatientChat and ProfilePanel are
+all wired, measured against the real API and the real database, and committed
+in c264fd8. 126 tests green, npm run build green.
 
 Building stops at 12:00 MYT so the README, brief, video and email get their
 hour. I already chose that plan - do not re-open it.
 
 Already done - do not redo:
-- Phases 0, 1, 2 and 3 shipped and verified anonymously in production. Four
-  channels, redaction enforced by a branded `Redacted` type, real value_event
-  count, guest->patient conversion with provenance intact, and RLS proven
-  three ways (logged-in patient, signed-out stranger, a second patient).
-- Phase 4's risk and profile libraries are committed and green. 126 tests.
+- Phases 0-4 shipped. Four channels, redaction enforced by a branded
+  `Redacted` type, real value_event count, guest->patient conversion with
+  provenance intact, RLS proven four ways, risk gating writing all four risk
+  columns, and living memory with provenance rendered on the patient page.
+- askClaudeIntake() IS proven against the real API: forced tool + effort
+  medium on claude-opus-5 works, 4.6-5.3s, ~$0.0152/turn.
+
+Phase 5 is Send to Clinic: on Medium/High risk, one button that persists an
+escalation row (triggering message + 1-5 bullet triage summary + profile
+snapshot + acquisition context), confirms "response in 12-18 hours", and lets
+the chat continue. The escalations table and its RLS already exist. The
+warm-lead view is already cut - do not build it.
+
+Known open item, my call to make - do not fix it silently: living-memory
+corrections currently match on the model-authored value STRING, so a value
+that drifts by one clause inserts a duplicate instead of changing status. A
+prompt instruction makes the model reuse the value verbatim and it was
+re-verified working, but that is probabilistic, not structural. The
+structural fix is to have the model echo back a stable item id.
 
 Stack decisions already made - don't re-ask:
 Next.js App Router + TypeScript + Tailwind, npm, Vitest, everything at the
@@ -303,15 +275,9 @@ How I want you to work:
 - Tell me plainly when I need to do something myself, and when I don't. I do
   NOT want to be sent to a dashboard unless it is genuinely unavoidable.
 
-The Phase 3 requirements that are graded and easy to get wrong:
-- Conversion must re-ask NOTHING. The guest's messages and their provenance
-  survive the guest->patient transition intact.
-- Access control is graded. RLS is already written and verified at the SQL
-  level; prove it end to end with a logged-in user AND a stranger.
-
-When Phase 3 is done: npm test, npm run build, click it through, verify
-anonymously against the deployed URL, commit, update timeline.md, then move
-straight to Phase 4 - which is protected and must not be cut.
+When Phase 5 is done: npm test, npm run build, click it through, verify
+anonymously against the deployed URL, commit, update timeline.md, then Phase
+6. Phase 7 starts at 12:00 no matter what is unfinished.
 ```
 ---
 
@@ -336,19 +302,7 @@ failure mode an apology in the brief cannot recover.
 
 ## Phase 3 — Auth + consent + conversion — ✓ DONE (see Shipped, below)
 
-## Phase 4 — Intake + risk gating + memory — **HALF DONE** (see "Phase 4 — exact state")
-
-- [x] **Emergency-phrase tests written first** (4 phrases + 25 close variants + 8 ambiguous)
-- [x] Hardcoded keyword safety net — runs independently; LLM may escalate, never de-escalate
-- [x] `decideRisk()` produces `risk_level` / `risk_reason` / `confidence` / `risk_provenance`,
-      and records `deescalation_blocked` when the guarantee actually fires
-- [x] Living-memory rules: corrections change **status**, never delete — there is no delete
-      case in the `ProfileMutation` union at all, so no caller can express one
-- [ ] `askClaudeIntake()` proven against the real API — **never called yet**
-- [ ] Risk columns actually written onto `messages` by either chat route
-- [ ] Patient intake chat route + component
-- [ ] Live Patient Profile rendered with provenance
-- [ ] Non-diagnostic system prompt for the patient chat + emergency disclaimer under its box
+## Phase 4 — Intake + risk gating + memory — ✓ DONE (see Shipped, below)
 
 ## Phase 5 — Send to Clinic (**11:15-11:45, 30 min**)
 
@@ -399,6 +353,51 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 ---
 
 ## Shipped
+
+### ✓ Phase 4 — Intake + risk gating + living memory (Sep 3, 2026, 09:57-10:15 MYT)
+
+- **`askClaudeIntake()` proven against the real API before any UI was built on it** — the one
+  unverified thing in the handoff. Forced `tool_choice` + `output_config: {effort:"medium"}` on
+  `claude-opus-5` does **not** 400. Measured 4.6–5.3s and **$0.0152/intake turn**; the reply,
+  the risk judgement and the fact extraction all ride one round trip
+- **One write path for `messages`** (`src/lib/messages.ts`) shared by both chat routes, so the
+  four risk columns cannot be written by one route and forgotten by the other.
+  `insertLeadMessage()` delegates to it. Verified in the DB: risk lands on **user** rows,
+  assistant rows stay null
+- **Invariant #2 measured in both directions.** Keyword-only: "crushing chest pain" →
+  `source: "keyword"`, `confidence: 1`, `llm_level: null`. Model escalation: "the pain has
+  settled now" has **no** keyword hit, and the model raised it to high from history →
+  `source: "llm"`, `keyword_level: null`. Risk is decided on the RAW text, not the redacted text
+- **Risk is stored BEFORE the model call** (keyword-only), then upgraded with
+  `max(keyword, llm)` after. A safety net that only exists after a successful network call is
+  not a safety net — and on a 502 the route still returns the keyword verdict so the emergency
+  banner renders with the model unreachable
+- **Access control on a route that bypasses RLS.** `/api/patient/chat` holds the admin key, so
+  `authorizePatientSession()` verifies the bearer token against `patient_sessions.auth_user_id`.
+  Proven: cross-patient **404**, no token **401**, garbage token **401**, own session **200**.
+  `profile_items` RLS proven four ways; the ProfilePanel reads only through the patient's own
+  RLS-bound client
+- **Verified anonymously against the deployed URL**, not from a logged-in browser: `/start`
+  302s, guest chat returns `risk.level: "high"`, conversion carries 3 messages, a real intake
+  turn runs the forced-tool call on Vercel, and `/api/patient/chat` with no token is **401**.
+  Prod profile read back through the anon key + patient JWT (RLS), not the admin key.
+  **Prod intake latency 11.2s** end-to-end from a laptop — vs 7.6s locally; `maxDuration = 60`
+  covers it, but that is the number the demo video will show
+- **Living memory rendered with provenance** — items grouped by `CATEGORY_LABELS`, each showing
+  its status chip and the sentence behind it, resolved via `provenance_pointer`
+
+**Bug found by measurement, not by review — worth keeping:** the model appended
+"— stopped last week" *into the fact's value*, so `matchKey()` missed and the correction
+**inserted a second row**, leaving the record saying the patient was both taking and not taking
+Advil. `profile.ts` was correct throughout (it never deleted — there is still no delete case).
+The real lesson is that **matching on a model-authored free-text value is a soft join**: a value
+that drifts by one clause silently becomes a new fact, and for a clinician a duplicated
+contradiction is worse than an absence. Fixed by making the value-reuse contract explicit in the
+intake prompt; re-verified on a fresh patient — one row, id unchanged, `active` → `stopped`,
+`created_at` 02:11:05 vs `updated_at` 02:11:14. **Residual risk: this fix is a prompt
+instruction, so it is probabilistic, not structural.** The structural fix (match on a stable id
+the model echoes back, rather than on the value text) is written up in Phase 5/6 notes below.
+
 
 ### ✓ Phase 3 — Auth + consent + guest→patient conversion (Sep 3, 2026, 09:12-09:30 MYT)
 
