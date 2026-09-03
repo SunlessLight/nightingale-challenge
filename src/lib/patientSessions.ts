@@ -227,6 +227,60 @@ export class ConversionError extends Error {
   }
 }
 
+export type AuthorizedPatient =
+  | { ok: true; session: PatientSession; authUserId: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Prove that the caller owns this patient session, on the server.
+ *
+ * WHY THIS EXISTS AT ALL: `/patient/[id]` reads through the patient's own
+ * RLS-bound client, so Postgres does the access control there. The intake chat
+ * route cannot work that way — it must write `messages` and `profile_items`,
+ * and there is no INSERT policy for the anon key anywhere in the schema by
+ * design. So it uses the admin client, which BYPASSES RLS entirely. The moment
+ * a route bypasses RLS, "the URL contains a uuid" becomes the only thing
+ * standing between a stranger and someone's medical record. It is not enough.
+ *
+ * So the token is verified against Supabase Auth and matched to
+ * `patient_sessions.auth_user_id` — the same predicate `owns_patient_session()`
+ * applies inside the policy, enforced here in the one place the policy cannot
+ * reach. The check is deliberately the same shape as the SQL, so the two cannot
+ * drift into disagreeing about who owns a record.
+ */
+export async function authorizePatientSession(
+  patientSessionId: string,
+  accessToken: string | null,
+): Promise<AuthorizedPatient> {
+  if (!UUID_RE.test(patientSessionId)) {
+    return { ok: false, status: 400, error: "A valid patient session id is required." };
+  }
+  if (!accessToken) {
+    return { ok: false, status: 401, error: "You need to be signed in to continue." };
+  }
+
+  const db = supabaseAdmin();
+  const { data: userData, error: userError } = await db.auth.getUser(accessToken);
+  if (userError || !userData?.user) {
+    return { ok: false, status: 401, error: "Your session has expired. Sign in again." };
+  }
+
+  const session = await loadPatientSession(patientSessionId);
+  // 404, not 403, for a record that exists but is not theirs. Distinguishing
+  // "wrong owner" from "no such record" tells an attacker which ids are real.
+  if (!session || session.auth_user_id !== userData.user.id) {
+    return { ok: false, status: 404, error: "No such record for this account." };
+  }
+  // Consent gates the intake chat itself, not just the clinician handoff. An
+  // un-consented session must not accumulate a profile we were never given
+  // permission to build.
+  if (!session.consent_at) {
+    return { ok: false, status: 403, error: "Consent is required before intake can start." };
+  }
+
+  return { ok: true, session, authUserId: userData.user.id };
+}
+
 /** Server-side read of a patient session. Used by the page shell for the title. */
 export async function loadPatientSession(id: string): Promise<PatientSession | null> {
   if (!UUID_RE.test(id)) return null;

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import PatientChat, { type ChatMessage } from "@/components/PatientChat";
+import ProfilePanel from "@/components/ProfilePanel";
 import { supabaseBrowser, supabaseStranger } from "@/lib/supabase";
 
 type Row = { id: string; role: string; content: string; created_at: string };
@@ -37,6 +39,11 @@ type State =
  */
 export default function PatientDashboard({ patientSessionId }: { patientSessionId: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
+  // Bumped when an intake turn actually changed the profile, so the panel
+  // re-reads. Incrementing a counter rather than passing the new items down
+  // keeps ProfilePanel reading through RLS itself — the panel proves its own
+  // access, instead of trusting a parent to have fetched the right rows.
+  const [profileVersion, setProfileVersion] = useState(0);
 
   const load = useCallback(async () => {
     const db = supabaseBrowser();
@@ -123,6 +130,10 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
   }
 
   const { patient, messages, access } = state;
+  // The earliest carried message, shown as the concrete proof that history
+  // predates the consent timestamp above it. An id that survived is abstract;
+  // "this was said twelve seconds before you signed up" is not.
+  const oldest = messages[0]?.created_at ?? null;
 
   return (
     <div className="space-y-5">
@@ -154,36 +165,38 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
         </dl>
       </section>
 
+      {/*
+        The conversation is NOT rendered twice. The carried-over messages are
+        seeded straight into the intake chat below, which is the whole point:
+        the patient carries on talking in the same thread rather than reading a
+        transcript of themselves and then starting again. This card is only the
+        evidence that the carry-over happened.
+      */}
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           Carried over from before you signed up
         </h2>
-        <p className="mt-1 text-xs text-zinc-500">
-          {messages.length} message{messages.length === 1 ? "" : "s"}, with their original ids
-          and timestamps. Nothing was re-asked.
+        <p className="mt-1 text-xs leading-5 text-zinc-500">
+          {messages.length} message{messages.length === 1 ? "" : "s"} moved across with their
+          original ids and timestamps — the rows were re-pointed, not copied. The intake chat
+          below continues from them, so nothing is asked twice.
+          {oldest ? ` Earliest message: ${new Date(oldest).toLocaleString()}.` : ""}
         </p>
-        <div className="mt-3 space-y-3">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={message.role === "user" ? "flex justify-end" : "flex justify-start"}
-            >
-              <div
-                className={
-                  message.role === "user"
-                    ? "max-w-[85%] rounded-2xl rounded-br-sm bg-teal-700 px-4 py-2.5 text-sm leading-6 text-white"
-                    : "max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-100 px-4 py-2.5 text-sm leading-6 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                }
-              >
-                {message.content}
-                <span className="mt-1 block text-[10px] opacity-60">
-                  {new Date(message.created_at).toLocaleString()}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
       </section>
+
+      <ProfilePanel patientSessionId={patientSessionId} refreshKey={profileVersion} />
+
+      <PatientChat
+        patientSessionId={patientSessionId}
+        initialMessages={messages.map(
+          (message): ChatMessage => ({
+            id: message.id,
+            role: message.role === "user" ? "user" : "assistant",
+            content: message.content,
+          }),
+        )}
+        onProfileChanged={() => setProfileVersion((version) => version + 1)}
+      />
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">

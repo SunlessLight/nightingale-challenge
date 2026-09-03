@@ -1,5 +1,7 @@
 import { CLINIC_ID } from "@/lib/clinic";
 import type { Channel, IdentityLevel } from "@/lib/channels";
+import { insertMessage, loadMessages, type StoredMessage } from "@/lib/messages";
+import type { RiskDecision } from "@/lib/risk";
 import { supabaseAdmin } from "@/lib/supabase";
 
 /**
@@ -72,49 +74,38 @@ export async function loadLeadSession(id: string): Promise<LeadSession | null> {
   return session;
 }
 
-export type StoredMessage = {
-  id: string;
-  role: string;
-  content: string;
-  redacted_content: string | null;
-  created_at: string;
-};
+/**
+ * Message reads and writes live in `src/lib/messages.ts` — ONE path shared with
+ * the patient intake chat, so the risk columns cannot be written by one route
+ * and forgotten by the other. These two are thin lead-flavoured wrappers.
+ */
+export type { StoredMessage };
 
 export async function loadLeadMessages(leadSessionId: string): Promise<StoredMessage[]> {
-  const { data, error } = await supabaseAdmin()
-    .from("messages")
-    .select("id, role, content, redacted_content, created_at")
-    .eq("session_type", "lead")
-    .eq("session_id", leadSessionId)
-    .order("created_at", { ascending: true });
-
-  if (error) throw new Error(`loadLeadMessages failed: ${error.message}`);
-  return (data ?? []) as StoredMessage[];
+  return loadMessages(leadSessionId, "lead");
 }
 
 /**
- * Insert one message. BOTH forms are stored: `content` is what the patient
- * actually typed (the clinical record), `redacted_content` is the only form
- * permitted to leave our server. CLAUDE.md invariant #5.
+ * Insert one guest message. BOTH forms are stored: `content` is what the
+ * patient actually typed (the clinical record), `redacted_content` is the only
+ * form permitted to leave our server. CLAUDE.md invariant #5.
+ *
+ * `risk` is optional so `/start`'s canned opening — an assistant message nobody
+ * has assessed — does not have to invent one.
  */
 export async function insertLeadMessage(input: {
   leadSessionId: string;
   role: "user" | "assistant";
   content: string;
   redactedContent: string;
+  risk?: RiskDecision;
 }): Promise<StoredMessage> {
-  const { data, error } = await supabaseAdmin()
-    .from("messages")
-    .insert({
-      session_id: input.leadSessionId,
-      session_type: "lead",
-      role: input.role,
-      content: input.content,
-      redacted_content: input.redactedContent,
-    })
-    .select("id, role, content, redacted_content, created_at")
-    .single();
-
-  if (error) throw new Error(`insertLeadMessage failed: ${error.message}`);
-  return data as StoredMessage;
+  return insertMessage({
+    sessionId: input.leadSessionId,
+    sessionType: "lead",
+    role: input.role,
+    content: input.content,
+    redactedContent: input.redactedContent,
+    risk: input.risk,
+  });
 }

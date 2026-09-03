@@ -8,6 +8,7 @@ import {
   loadLeadSession,
 } from "@/lib/leadSessions";
 import { redact, toRedactedTurns } from "@/lib/redaction";
+import { decideRisk } from "@/lib/risk";
 
 /**
  * Guest chat. POST { leadSessionId, message }.
@@ -82,12 +83,23 @@ export async function POST(request: Request) {
 
   // 2 + 3. Redact, then store both forms. `content` is the clinical record of
   // what they actually typed; `redacted_content` is the only form allowed out.
+  //
+  // RISK IS ASSESSED ON THE RAW TEXT, NOT THE REDACTED TEXT. Redaction can
+  // rewrite a sentence ("I'm Evan and I can't breathe" loses a token), and the
+  // keyword layer must see exactly what the person typed.
+  //
+  // `null` for the LLM layer is not a shortcut: the guest chat runs the plain
+  // askClaude(), which returns prose and no risk opinion. decideRisk(raw, null)
+  // is therefore the keyword layer standing alone — the case it exists for —
+  // and the row carries a real, auditable verdict either way.
   const { redacted, found } = redact(rawMessage);
+  const risk = decideRisk(rawMessage, null);
   await insertLeadMessage({
     leadSessionId: lead.id,
     role: "user",
     content: rawMessage,
     redactedContent: redacted,
+    risk,
   });
 
   // 4. Payload built from redacted_content only — see toRedactedTurns().
@@ -105,11 +117,16 @@ export async function POST(request: Request) {
     outputTokens = result.outputTokens;
   } catch (cause) {
     console.error("guest chat LLM call failed:", (cause as Error).message);
+    // The model is down, but the keyword layer already ran and its verdict is
+    // already stored. Ship it to the UI anyway: someone who typed "crushing
+    // chest pain" must still be told to dial 999 when Anthropic is unreachable.
+    // This is the whole argument for a layer that makes no network call.
     return NextResponse.json(
       {
         error:
           "I could not get a reply just now. Please try again — and if this is " +
           "urgent, call the clinic or dial 999.",
+        risk: { level: risk.level, reason: risk.reason },
       },
       { status: 502 },
     );
@@ -140,6 +157,10 @@ export async function POST(request: Request) {
       redaction_kinds: found.join(",") || "none",
       input_tokens: inputTokens,
       output_tokens: outputTokens,
+      // A level and a rule id. Both are PHI-free by construction — the rule id
+      // is one of our own constants, never a word the patient wrote.
+      risk_level: risk.level,
+      risk_source: risk.provenance.source,
     },
   });
 
@@ -149,5 +170,8 @@ export async function POST(request: Request) {
     // Surfaced so the UI can tell the guest what was removed before sending.
     // Kinds only — never the values.
     redacted: found,
+    // Level and reason only. `risk_provenance` is an audit record for the
+    // clinic, not something to explain to a frightened person mid-conversation.
+    risk: { level: risk.level, reason: risk.reason },
   });
 }

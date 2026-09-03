@@ -20,6 +20,13 @@ export const FUNNEL_EVENTS = [
   "value_event",
   /** Guest -> patient: they signed up and consented. Logged on the PATIENT session. */
   "consent_granted",
+  /**
+   * One turn of the patient intake chat. Its metadata carries `risk_level` and
+   * `risk_source`, so the funnel can answer "how often did the keyword layer
+   * decide, and how often did the model try to talk it down" — without storing
+   * a single word the patient wrote.
+   */
+  "intake_message",
 ] as const;
 export type FunnelEventType = (typeof FUNNEL_EVENTS)[number];
 
