@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import ConsentSignup from "@/components/ConsentSignup";
 import GuestChat, { type ChatMessage } from "@/components/GuestChat";
 import { CLINIC_ID, CLINIC_NAME } from "@/lib/clinic";
 import { countValueEventPeople, valueEventCopy } from "@/lib/funnel";
@@ -65,6 +66,19 @@ export default async function GuestPage({ params }: PageProps<"/guest/[leadSessi
       </div>
 
       <GuestChat leadSessionId={lead.id} initialMessages={messages} />
+
+      {/*
+        The ask comes AFTER the conversation, never in front of it. It is also
+        hidden once this lead has already converted, so a shared link cannot be
+        used to claim someone else's record a second time.
+      */}
+      {!lead.converted_patient_id && (
+        <ConsentSignup
+          leadSessionId={lead.id}
+          clinicName={CLINIC_NAME}
+          messageCount={messages.length}
+        />
+      )}
 
       {/*
         The brief's central complaint is that sign-up feels invasive. Saying

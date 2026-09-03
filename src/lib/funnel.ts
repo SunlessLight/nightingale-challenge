@@ -18,6 +18,8 @@ export const FUNNEL_EVENTS = [
   "guest_message",
   /** The brief's "give them something genuinely useful for free" moment. */
   "value_event",
+  /** Guest -> patient: they signed up and consented. Logged on the PATIENT session. */
+  "consent_granted",
 ] as const;
 export type FunnelEventType = (typeof FUNNEL_EVENTS)[number];
 
