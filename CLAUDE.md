@@ -86,6 +86,32 @@ These are not preferences. A change that violates one of these is wrong even if 
 - **`/patient/[id]` never server-renders patient data with the admin key.** Every read goes
   through the patient's own RLS-bound client, so access control is a Postgres policy rather
   than an unguessable URL. The page runs the signed-out query live as a negative control.
+- **Invariant #2 is one line in `decideRisk()`** (`src/lib/risk.ts`): it takes the **max** of
+  the keyword level and the LLM level. The model is passed in as data, never consulted for
+  the final answer, and `llm: null` (a failed or skipped model call) leaves the keyword layer
+  standing alone — which is the situation that layer exists for. `risk_provenance` records
+  `deescalation_blocked: true` whenever the model proposed something lower and was overruled,
+  so the guarantee is auditable, not merely asserted.
+- **Keyword rules are ONE table, highest-severity-wins** — not first-match-wins like
+  `channels.ts`. "I feel dizzy and I can't breathe" must not let the dizziness rule shadow the
+  breathing rule. Adding a phrase means adding a row, never editing control flow.
+- **The keyword layer deliberately ignores negation and third parties.** "I don't think this
+  is chest pain" and "my mother had heavy bleeding" both flag High. A false positive costs one
+  unnecessary "call 999"; a false negative can cost a life. Do not add negation handling.
+- **A correction changes `profile_items.status`. It cannot delete.** `planProfileMutations()`
+  returns a union with `insert` / `status_change` / `unchanged` and **no delete case**, so no
+  caller can express a deletion even by mistake. `provenance_pointer` is ON DELETE RESTRICT
+  for the same reason: losing the message loses the fact's provenance.
+- **`profile_items.patient_session_id` is a NOT NULL FK to `patient_sessions`** — a guest
+  cannot have profile items. Memory extraction therefore belongs to the patient intake chat,
+  not the guest chat. This is a schema constraint, not a preference.
+- **`npm test` passing does not mean the types are sound.** Vitest transpiles and strips types
+  without checking them, so a function can return an object missing a required field and still
+  go green. `npm run build` is the type gate — run both.
+- **`zod` is present in `node_modules` but absent from `package.json`.** It is transitive, so
+  the Anthropic SDK's `zodOutputFormat` helper must not be imported unless zod is added as a
+  real dependency — Vercel builds with `npm ci`, which installs from the lock, and a phantom
+  import is exactly how Phase 1 lost time.
 
 ---
 
