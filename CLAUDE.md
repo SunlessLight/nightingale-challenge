@@ -131,6 +131,32 @@ These are not preferences. A change that violates one of these is wrong even if 
   intake prompt therefore carries an explicit contract: **copy an existing fact's `value`
   character for character and change only `status`.** Do not soften or delete that paragraph;
   it is load-bearing, and it is the only thing preventing contradictory duplicates.
+- **The triage summary is ASSEMBLED, never generated.** `buildTriageSummary()` in
+  `src/lib/escalations.ts` calls no model: every bullet is a verbatim quote of the patient's
+  message or a field already in `profile_items`. Two reasons, and both outrank "a model would
+  write it better". (a) This path exists for the moment things go wrong — a handoff written by
+  the same API call it is escalating around fails exactly when it matters, which is the
+  argument that already produced the keyword layer. (b) A generated summary can introduce a
+  symptom the patient never described, and it reads perfectly well while doing so. **Do not
+  "improve" this by adding an LLM call.**
+- **The escalate route trusts NOTHING the client says about risk.** The request body carries
+  only `patientSessionId` — no level, no message id, no summary. The server calls
+  `loadLatestRiskyMessage()` and re-reads the verdict *it* stored, returning 422 when nothing
+  on file is Medium/High. Same shape as `validateConversion()` refusing `"true"`: the disabled
+  button is a courtesy, the server lookup is the control.
+- **Escalations are idempotent on `triggering_message_id`, not on the session.** A double-tap
+  returns the existing row, because a duplicate costs another patient their place in a
+  clinician's queue. A *later* high-risk message is a genuinely new event and gets its own
+  row. Keying on the session would collapse the second case into the first.
+- **Risk state is re-read from the database on page load, never only remembered in React.**
+  `PatientDashboard` seeds `PatientChat`'s `initialRisk` from `messages.risk_level` and
+  `initialEscalation` from `escalations`, both through the patient's own RLS-bound client.
+  Before this, a reload cleared the emergency banner and the route to a human. **A reload must
+  never be able to clear a safety state.**
+- **`RESPONSE_WINDOW` lives in `clinic.ts`, not `escalations.ts`.** Both the API route and the
+  browser need it, and `escalations.ts` imports `supabaseAdmin` — importing it from a client
+  component would pull server-only code into the browser bundle. Constants a browser needs
+  belong in a module with no server imports.
 - **`npm test` passing does not mean the types are sound.** Vitest transpiles and strips types
   without checking them, so a function can return an object missing a required field and still
   go green. `npm run build` is the type gate — run both.

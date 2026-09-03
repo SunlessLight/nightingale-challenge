@@ -11,17 +11,21 @@ actually remain. The SCHEDULE table in the handoff is the authority.
 
 ---
 
-# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~10:15, Phase 4 DONE)
+# 📍 HANDOFF — read this first (updated Sep 3, 2026, ~11:00, Phase 5 DONE)
 
 ## Where we are
 
-**Phases 0-4 are done.** Phase 4 — the highest-graded section — is fully wired and verified
-end to end against the real API and the real database. **Next up is Phase 5 (Send to Clinic),
-then Phase 6 (tests), then Phase 7 at the 12:00 hard stop.**
+**Phases 0-5 are done.** **Next up is Phase 6 (the remaining 5 of 8 tests), then Phase 7 at
+the 12:00 hard stop.**
 
-**Phase 4 came in at ~10:15 against its 11:15 box** (libraries ~20 min the night before,
-wiring ~45 min). That leaves Phase 5 and 6 with more room than the schedule assumed. Building
-still stops at 12:00 MYT.
+**Phase 5 came in at ~11:00 against its 11:45 box.** Phase 4 finished ~10:15 against 11:15.
+Phase 6 therefore has ~1h against its 15-min budget — spend the surplus on the tests, then
+start Phase 7 early if they land. Building still stops at 12:00 MYT.
+
+**Still open for Phase 6:** risk escalation (chest pain), memory mutation + provenance,
+access control, and the "are you a real doctor?" honesty test. Two of those have live prod
+evidence already (access control in Phase 3/4, honesty in the intake prompt) and need only a
+test file. **Before submission: delete or auth-gate `/api/smoke` — it is public and billable.**
 
 Live: https://nightingaleai-challenge.vercel.app — verified anonymously by curl, not from
 Evan's logged-in browser.
@@ -226,13 +230,13 @@ Read these, in this order, then execute:
   1. CLAUDE.md      (safety invariants - non-negotiable)
   2. timeline.md    (this file: the HANDOFF and the SCHEDULE table)
 
-We are on Phase 5 (Send to Clinic), then Phase 6 (the 8 tests). Do not spawn
-subagents.
+We are on Phase 6 (the remaining 5 of the 8 tests), then Phase 7 at 12:00.
+Do not spawn subagents.
 
 Phase 4 is DONE and verified - do not redo or redesign it. risk.ts,
 profile.ts, messages.ts, /api/patient/chat, PatientChat and ProfilePanel are
 all wired, measured against the real API and the real database, and committed
-in c264fd8. 126 tests green, npm run build green.
+in c264fd8, and Phase 5 in 9ec92a0. 136 tests green, npm run build green.
 
 Building stops at 12:00 MYT so the README, brief, video and email get their
 hour. I already chose that plan - do not re-open it.
@@ -245,11 +249,15 @@ Already done - do not redo:
 - askClaudeIntake() IS proven against the real API: forced tool + effort
   medium on claude-opus-5 works, 4.6-5.3s, ~$0.0152/turn.
 
-Phase 5 is Send to Clinic: on Medium/High risk, one button that persists an
-escalation row (triggering message + 1-5 bullet triage summary + profile
-snapshot + acquisition context), confirms "response in 12-18 hours", and lets
-the chat continue. The escalations table and its RLS already exist. The
-warm-lead view is already cut - do not build it.
+Phase 5 (Send to Clinic) is DONE and verified in prod - do not redo it.
+/api/patient/escalate, src/lib/escalations.ts, the SendToClinic UI and
+tests/escalation.test.ts are all shipped in 9ec92a0. The triage summary is
+deterministic on purpose (no LLM call) - do not "improve" it with one.
+The warm-lead view is cut - do not build it.
+
+Phase 6 is the 5 remaining tests: risk escalation (chest pain), memory
+mutation + provenance, access control, and "are you a real doctor?" honesty.
+Before submission, delete or auth-gate /api/smoke - it is public and billable.
 
 Known open item, my call to make - do not fix it silently: living-memory
 corrections currently match on the model-authored value STRING, so a value
@@ -304,12 +312,7 @@ failure mode an apology in the brief cannot recover.
 
 ## Phase 4 — Intake + risk gating + memory — ✓ DONE (see Shipped, below)
 
-## Phase 5 — Send to Clinic (**11:15-11:45, 30 min**)
-
-- [ ] On Med/High risk: one clear button
-- [ ] Escalation persists triggering message + 1-5 bullet triage summary + profile snapshot + provenance + acquisition context
-- [ ] Confirmation + "response in 12-18 hours"; chat continues after sending
-- [ ] Warm-lead view reduced to a **minimal read-only list** (first thing to cut)
+## Phase 5 — Send to Clinic — ✓ DONE (see Shipped, below)
 
 ## Phase 6 — The 8 required tests (**11:45-12:00, 15 min**)
 
@@ -317,7 +320,8 @@ Simplified versions are explicitly fine — they check that the cases were thoug
 
 - [x] guest→patient conversion — `tests/conversion.test.ts` (Phase 3), consent gate
 - [x] value_event accuracy — `tests/valueEvents.test.ts` (Phase 2)
-- [ ] escalation payload
+- [x] escalation payload — `tests/escalation.test.ts` (Phase 5), 10 cases incl. "never
+      invents a fact" and "keeps stopped medications"
 - [ ] risk escalation (chest pain case)
 - [ ] memory mutation + provenance
 - [x] redaction — `tests/redaction.test.ts` (Phase 2), incl. a runtime assertion on the bytes
@@ -353,6 +357,31 @@ Named as deliberate cuts in the technical brief — these are bonus-only:
 ---
 
 ## Shipped
+
+### ✓ Phase 5 — Send to Clinic (Sep 3, 2026, 10:40-11:00 MYT)
+
+- **The triage summary is assembled, not generated.** `buildTriageSummary()` calls no model:
+  every bullet is a verbatim quote or a stored `profile_items` field. It exists for the moment
+  the API is the thing that is down, and it cannot invent a symptom the patient never
+  described. Cost: **$0 and ~0ms**, against ~$0.0152 and ~5s for a model-written one
+- **The client cannot manufacture an escalation.** The body carries only `patientSessionId` —
+  no risk level, no message id. The server re-reads its own stored verdict via
+  `loadLatestRiskyMessage()`. **Measured in prod:** 422 with nothing risky on file, 401 with
+  no token, 401 with a garbage token, 404 with another patient's id, 200 on the real path
+- **Idempotent on `triggering_message_id`, not on the session.** Four clicks in production
+  produced **one** escalation row, one audit row and one funnel row; a later "difficulty
+  breathing" message produced a **second, separate** escalation flagged by the `breathing`
+  rule. A duplicate would cost another patient their place in the queue
+- **Bug found while testing, not by review:** risk lived only in React state, so a page reload
+  cleared the emergency banner *and* the button to reach a human — at High risk. Both are now
+  re-read on load through the patient's own RLS-bound client. A reload must never be able to
+  clear a safety state
+- **Escalations RLS proven live:** patient reads their own 2 rows with the anon key + JWT and
+  no `where` clause of their own; a signed-out stranger with the same key reads **0**.
+  `audit_logs` carried ids only, `funnel_events.metadata` carried counts only
+- **Verified anonymously against the deployed URL.** Prod intake **9.6s**, prod escalate
+  **1.4-2.8s** (no model call — auth, two reads, one insert). Client bundle grepped: **0**
+  files contain the secret key, **0** contain `supabaseAdmin`. **136 tests green, build green**
 
 ### ✓ Phase 4 — Intake + risk gating + living memory (Sep 3, 2026, 09:57-10:15 MYT)
 
