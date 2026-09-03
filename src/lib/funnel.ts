@@ -27,6 +27,12 @@ export const FUNNEL_EVENTS = [
    * a single word the patient wrote.
    */
   "intake_message",
+  /**
+   * The patient chose to hand the conversation to a human. Metadata carries
+   * the risk level and how many profile items went with it — never a bullet
+   * of the triage summary itself, which is full of clinical text.
+   */
+  "escalation_created",
 ] as const;
 export type FunnelEventType = (typeof FUNNEL_EVENTS)[number];
 

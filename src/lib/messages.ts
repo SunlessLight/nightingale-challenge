@@ -107,3 +107,55 @@ export async function loadMessages(
   if (error) throw new Error(`loadMessages failed: ${error.message}`);
   return (data ?? []) as StoredMessage[];
 }
+
+/**
+ * A user message carrying the risk verdict that was stored against it.
+ *
+ * Separate from StoredMessage on purpose: the risk columns are only ever
+ * populated on role='user' rows, so a type that always has them would be a lie
+ * about assistant rows.
+ */
+export type RiskyMessage = StoredMessage & {
+  risk_level: string | null;
+  risk_reason: string | null;
+  confidence: number | null;
+  risk_provenance: Record<string, unknown> | null;
+};
+
+const RISKY_MESSAGE_COLUMNS =
+  "id, role, content, redacted_content, created_at, risk_level, risk_reason, confidence, risk_provenance";
+
+/**
+ * The most recent thing the PATIENT said that the server itself judged to be
+ * Medium or High risk.
+ *
+ * THIS IS THE ACCESS-CONTROL SHAPE OF THE "SEND TO CLINIC" BUTTON. The browser
+ * does not get to say "this was high risk" — it says only which session it is
+ * talking about, and the server re-reads the verdict it stored earlier. The
+ * same instinct as validateConversion() refusing the string "true": a disabled
+ * button is a courtesy, a server-side lookup is the control.
+ *
+ * `role='user'` is not incidental. Risk columns are written on user rows only
+ * (see riskColumns above), so filtering here keeps that one rule visible in
+ * both the write and the read.
+ */
+export async function loadLatestRiskyMessage(
+  sessionId: string,
+): Promise<RiskyMessage | null> {
+  const { data, error } = await supabaseAdmin()
+    .from("messages")
+    .select(RISKY_MESSAGE_COLUMNS)
+    .eq("session_type", "patient")
+    .eq("session_id", sessionId)
+    .eq("role", "user")
+    .in("risk_level", ["medium", "high"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("loadLatestRiskyMessage failed:", error.message);
+    return null;
+  }
+  return (data ?? null) as unknown as RiskyMessage | null;
+}

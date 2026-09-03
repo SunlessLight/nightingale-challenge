@@ -1,11 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import PatientChat, { type ChatMessage } from "@/components/PatientChat";
+import PatientChat, {
+  type ChatMessage,
+  type Escalation,
+  type Risk,
+  type RiskLevel,
+} from "@/components/PatientChat";
 import ProfilePanel from "@/components/ProfilePanel";
+import { CLINIC_NAME, RESPONSE_WINDOW } from "@/lib/clinic";
 import { supabaseBrowser, supabaseStranger } from "@/lib/supabase";
 
-type Row = { id: string; role: string; content: string; created_at: string };
+type Row = {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+  risk_level: RiskLevel | null;
+  risk_reason: string | null;
+};
+
+type EscalationRow = {
+  id: string;
+  triggering_message_id: string;
+  triage_summary: string[];
+  created_at: string;
+};
 
 type Patient = {
   id: string;
@@ -22,7 +42,16 @@ type State =
   | { status: "loading" }
   | { status: "signed-out" }
   | { status: "denied" }
-  | { status: "ready"; patient: Patient; messages: Row[]; access: AccessCheck };
+  | {
+      status: "ready";
+      patient: Patient;
+      messages: Row[];
+      access: AccessCheck;
+      /** The stored verdict on their latest message — see PatientChat's initialRisk. */
+      risk: Risk | null;
+      /** A handoff already sent for that same message, if any. */
+      escalation: Escalation | null;
+    };
 
 /**
  * The patient's own view — and the access-control demonstration.
@@ -70,11 +99,47 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
 
     const { data: messageRows } = await db
       .from("messages")
-      .select("id, role, content, created_at")
+      .select("id, role, content, created_at, risk_level, risk_reason")
       .eq("session_id", patientSessionId)
       .order("created_at", { ascending: true });
 
     const mine = (messageRows ?? []) as Row[];
+
+    // The safety state, re-read rather than remembered. `risk_level` was
+    // written by the SERVER (max of the keyword and model layers) and is only
+    // ever populated on role='user' rows — so this is the same verdict the
+    // chat response carried, recovered after a reload rather than re-derived
+    // in the browser. A banner the browser computed would be a second, weaker
+    // copy of the safety rule.
+    const latestRisky = [...mine]
+      .reverse()
+      .find((row) => row.role === "user" && (row.risk_level === "medium" || row.risk_level === "high"));
+
+    // Read through the SAME RLS-bound client: `escalations_own_read` is
+    // `owns_patient_session(patient_session_id)`, so Postgres — not this
+    // component — decides whether these rows are visible at all.
+    let escalation: Escalation | null = null;
+    if (latestRisky) {
+      const { data: escalationRows } = await db
+        .from("escalations")
+        .select("id, triggering_message_id, triage_summary, created_at")
+        .eq("triggering_message_id", latestRisky.id)
+        .limit(1);
+
+      const row = (escalationRows ?? [])[0] as EscalationRow | undefined;
+      if (row) {
+        escalation = {
+          escalationId: row.id,
+          triageSummary: row.triage_summary ?? [],
+          respondWithin: RESPONSE_WINDOW,
+          clinicName: CLINIC_NAME,
+          createdAt: row.created_at,
+          // Not "already sent" in the double-tap sense — this is the record of
+          // a send that happened, recovered on load.
+          alreadySent: false,
+        };
+      }
+    }
 
     // The negative control, run live from the same browser with the same
     // public key and no session.
@@ -87,6 +152,13 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
       status: "ready",
       patient: patientRow as unknown as Patient,
       messages: mine.filter((row) => row.role === "user" || row.role === "assistant"),
+      risk: latestRisky
+        ? {
+            level: latestRisky.risk_level as RiskLevel,
+            reason: latestRisky.risk_reason ?? "Flagged for clinician review.",
+          }
+        : null,
+      escalation,
       access: {
         mine: mine.length,
         stranger: (strangerRows ?? []).length,
@@ -129,7 +201,7 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
     );
   }
 
-  const { patient, messages, access } = state;
+  const { patient, messages, access, risk, escalation } = state;
   // The earliest carried message, shown as the concrete proof that history
   // predates the consent timestamp above it. An id that survived is abstract;
   // "this was said twelve seconds before you signed up" is not.
@@ -195,6 +267,8 @@ export default function PatientDashboard({ patientSessionId }: { patientSessionI
             content: message.content,
           }),
         )}
+        initialRisk={risk}
+        initialEscalation={escalation}
         onProfileChanged={() => setProfileVersion((version) => version + 1)}
       />
 

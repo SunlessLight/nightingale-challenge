@@ -7,6 +7,15 @@ export type ChatMessage = { id: string; role: "user" | "assistant"; content: str
 export type RiskLevel = "low" | "medium" | "high";
 export type Risk = { level: RiskLevel; reason: string };
 
+export type Escalation = {
+  escalationId: string;
+  triageSummary: string[];
+  respondWithin: string;
+  clinicName: string;
+  createdAt: string;
+  alreadySent: boolean;
+};
+
 const REDACTION_LABELS: Record<string, string> = {
   name: "your name",
   phone: "your phone number",
@@ -31,18 +40,37 @@ const REDACTION_LABELS: Record<string, string> = {
 export default function PatientChat({
   patientSessionId,
   initialMessages,
+  initialRisk = null,
+  initialEscalation = null,
   onProfileChanged,
 }: {
   patientSessionId: string;
   initialMessages: ChatMessage[];
+  /**
+   * The risk the SERVER stored against this patient's most recent message,
+   * re-read on page load through their own RLS-bound client.
+   *
+   * WHY THIS PROP EXISTS: risk used to live only in React state, set from a
+   * chat response. That meant someone who typed "crushing chest pain" and then
+   * reloaded the page lost both the emergency banner and the route to a human
+   * — at exactly the moment they needed both. Reloading a page must not be
+   * able to clear a safety state; the verdict is durable in the database, so
+   * the UI reads it back rather than remembering it.
+   */
+  initialRisk?: Risk | null;
+  /** A handoff already sent for that same message, so a reload does not offer to re-send it. */
+  initialEscalation?: Escalation | null;
   onProfileChanged: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [risk, setRisk] = useState<Risk | null>(null);
+  const [risk, setRisk] = useState<Risk | null>(initialRisk);
   const [redactedNote, setRedactedNote] = useState<string | null>(null);
+  const [escalation, setEscalation] = useState<Escalation | null>(initialEscalation);
+  const [escalating, setEscalating] = useState(false);
+  const [escalateError, setEscalateError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,6 +84,13 @@ export default function PatientChat({
 
     setError(null);
     setRedactedNote(null);
+    setEscalateError(null);
+    // A new message is a new potential trigger, so the previous confirmation
+    // must not stand in for it. If this turn flags too, the clinic should be
+    // offered the update — and if the patient sends it, the server keys on the
+    // message id, so re-sending an already-sent one is a no-op rather than a
+    // second entry in someone's queue.
+    setEscalation(null);
     setInput("");
     setSending(true);
 
@@ -118,6 +153,53 @@ export default function PatientChat({
     }
   }
 
+  /**
+   * Hand the conversation to a human.
+   *
+   * Note what this request does NOT contain: a risk level, a message id, or a
+   * triage summary. It says only which session it is. The server re-reads the
+   * verdict it stored earlier and refuses with 422 if nothing on file is
+   * Medium or High — so this button cannot manufacture an escalation, it can
+   * only ask for one the server already agrees is warranted.
+   *
+   * The chat is NOT closed afterwards. The whole promise of the product is
+   * that the patient does not have to start again with the human; they carry
+   * on in the same thread while the clinic reads what has already been said.
+   */
+  async function sendToClinic() {
+    if (escalating) return;
+    setEscalateError(null);
+    setEscalating(true);
+
+    try {
+      const { data } = await supabaseBrowser().auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) {
+        setEscalateError("Your session has expired. Please sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/patient/escalate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ patientSessionId }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        setEscalateError(payload.error ?? "Could not send this to the clinic. Please try again.");
+        return;
+      }
+      setEscalation(payload as Escalation);
+    } catch {
+      setEscalateError(
+        "Could not reach the clinic. If this is urgent, do not wait for us — dial 999.",
+      );
+    } finally {
+      setEscalating(false);
+    }
+  }
+
   return (
     <div className="flex flex-col rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       <div className="border-b border-zinc-100 px-5 py-3 dark:border-zinc-900">
@@ -163,6 +245,21 @@ export default function PatientChat({
 
       {risk && risk.level !== "low" && <RiskBanner risk={risk} />}
 
+      {/*
+        The handoff. Offered whenever the SERVER has judged something Medium or
+        High — and offered rather than done automatically, because sending a
+        conversation to another human is a disclosure, and it is the patient's
+        to make. The emergency instruction above is not: that renders either way.
+      */}
+      {risk && risk.level !== "low" && (
+        <SendToClinic
+          onSend={sendToClinic}
+          sending={escalating}
+          escalation={escalation}
+          error={escalateError}
+        />
+      )}
+
       {redactedNote && (
         <p className="border-t border-zinc-100 px-5 py-2.5 text-xs text-teal-800 dark:border-zinc-900 dark:text-teal-300">
           {redactedNote}
@@ -204,6 +301,88 @@ export default function PatientChat({
         If this is an emergency, exit Nightingale and dial <strong>999</strong>. This is an
         AI assistant, not a doctor, and it does not diagnose.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The clinician handoff.
+ *
+ * TWO DELIBERATE CHOICES IN THIS COMPONENT:
+ *
+ * 1. After sending, it shows the patient the EXACT bullets that went to the
+ *    clinic. A handoff the person cannot see is a disclosure they have to take
+ *    on trust, and this whole product is an argument that they should not have
+ *    to. It costs nothing to show: every bullet is their own words or their own
+ *    profile, so there is nothing here they did not already say.
+ *
+ * 2. The button stays available afterwards. If they tell us something new and
+ *    it flags again, that is a new event and the clinic should get it. The
+ *    server is idempotent on the triggering message, so pressing it twice for
+ *    the SAME message returns the existing escalation instead of queueing a
+ *    duplicate — a duplicate costs someone else their place in the queue.
+ */
+function SendToClinic({
+  onSend,
+  sending,
+  escalation,
+  error,
+}: {
+  onSend: () => void;
+  sending: boolean;
+  escalation: Escalation | null;
+  error: string | null;
+}) {
+  return (
+    <div className="border-t border-zinc-100 px-5 py-4 dark:border-zinc-900">
+      {escalation ? (
+        <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 dark:border-teal-900/50 dark:bg-teal-950/40">
+          <p className="text-sm font-semibold text-teal-900 dark:text-teal-200">
+            {escalation.alreadySent
+              ? `${escalation.clinicName} already has this.`
+              : `Sent to ${escalation.clinicName}.`}{" "}
+            A clinician usually responds within {escalation.respondWithin}.
+          </p>
+          <p className="mt-1 text-xs leading-5 text-teal-800 dark:text-teal-300">
+            You do not need to explain any of it again — they can see the whole conversation.
+            Keep talking below if there is more; anything new goes to them too.
+          </p>
+
+          <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-400">
+            Exactly what they received
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {escalation.triageSummary.map((bullet, index) => (
+              <li
+                key={index}
+                className="text-xs leading-5 text-teal-900 dark:text-teal-200"
+              >
+                • {bullet}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={sending}
+            className="w-full rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+          >
+            {sending ? "Sending…" : "Send this to a clinician"}
+          </button>
+          <p className="mt-2 text-xs leading-5 text-zinc-500">
+            A real person reads it. They get what you have already told us — what is going on,
+            anything you take, anything you react to, and where you first got in touch — so you
+            never have to start again. You can keep chatting while you wait.
+          </p>
+        </>
+      )}
+
+      {error && (
+        <p className="mt-2 text-xs leading-5 text-red-700 dark:text-red-400">{error}</p>
+      )}
     </div>
   );
 }

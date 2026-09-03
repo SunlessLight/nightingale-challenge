@@ -9,3 +9,14 @@
 export const CLINIC_ID = "sunway-family-demo";
 export const CLINIC_NAME = "Sunway Family Clinic";
 export const CLINIC_OPENS = "8:00am";
+
+/**
+ * What the clinic promises after a "send to clinician" handoff.
+ *
+ * It lives HERE, with the other plain constants, and not in escalations.ts,
+ * because both the API route and the patient's browser need it — and
+ * escalations.ts imports the ADMIN Supabase client. Importing it from a client
+ * component would pull server-only code into the browser bundle. Constants a
+ * browser needs belong in a module with no server imports.
+ */
+export const RESPONSE_WINDOW = "12-18 hours";
